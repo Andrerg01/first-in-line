@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: grand_opening_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-grand_openings}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # Fail fast rather than silently applying a weak default credential.
+      # Copy .env.example to .env and set this value before running.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env (copy .env.example)}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-grand_openings}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  backend-api:
+    build:
+      context: ./backend
+    container_name: grand_opening_backend
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/grand_openings}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp-server:9000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp-server:
+        condition: service_started
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: grand_opening_frontend
+    depends_on:
+      - backend-api
+    ports:
+      - "5173:80"
+
+  mcp-server:
+    build:
+      context: ./mcp_server
+    container_name: grand_opening_mcp
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "9000:9000"
+
+  worker:
+    build:
+      context: ./worker
+    container_name: grand_opening_worker
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/grand_openings}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp-server:9000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp-server:
+        condition: service_started
+    command: ["python", "-m", "app.cli", "noop"]
+
+volumes:
+  postgres_data:
