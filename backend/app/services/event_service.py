@@ -108,3 +108,21 @@ def get_event_claims(db: Session, event_id: uuid.UUID) -> list[EventClaim]:
     """
     get_event_detail(db, event_id)  # raises 404 if missing
     return claims_repository.get_claims_for_event(db, event_id)
+
+
+def patch_event_status(db: Session, event_id: uuid.UUID, new_status: str) -> Event:
+    """Update the status of an event.
+
+    Args:
+        db: Active database session.
+        event_id: UUID of the event to update.
+        new_status: The desired status value.
+
+    Returns:
+        The updated ``Event`` instance.
+
+    Raises:
+        HTTPException: 404 if the event does not exist.
+    """
+    event = get_event_detail(db, event_id)  # raises 404 if missing
+    return event_repository.update_event_status(db, event, new_status)

@@ -171,3 +171,38 @@ class TestGetEventClaimsEndpoint:
         data = response.json()
         assert len(data) == 1
         assert data[0]["claim_type"] == "business_name"
+
+
+class TestPatchEventStatusEndpoint:
+    def test_updates_status_to_verified(self, test_client):
+        event_id = _insert_event(test_client, status="candidate")
+        response = test_client.patch(
+            f"/api/events/{event_id}/status",
+            json={"status": "verified"},
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "verified"
+
+    def test_updates_status_to_rejected(self, test_client):
+        event_id = _insert_event(test_client, status="candidate")
+        response = test_client.patch(
+            f"/api/events/{event_id}/status",
+            json={"status": "rejected"},
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "rejected"
+
+    def test_returns_404_for_unknown_event(self, test_client):
+        response = test_client.patch(
+            f"/api/events/{uuid.uuid4()}/status",
+            json={"status": "verified"},
+        )
+        assert response.status_code == 404
+
+    def test_returns_422_for_invalid_status(self, test_client):
+        event_id = _insert_event(test_client)
+        response = test_client.patch(
+            f"/api/events/{event_id}/status",
+            json={"status": "not_a_real_status"},
+        )
+        assert response.status_code == 422

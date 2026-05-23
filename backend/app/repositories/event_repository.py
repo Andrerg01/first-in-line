@@ -82,3 +82,19 @@ def create_event(db: Session, **kwargs: Any) -> Event:
     db.add(event)
     db.flush()
     return event
+
+
+def update_event_status(db: Session, event: Event, new_status: str) -> Event:
+    """Set the status field on an existing event and flush.
+
+    Args:
+        db: Active database session.
+        event: The ``Event`` ORM instance to update.
+        new_status: The new status string.
+
+    Returns:
+        The updated ``Event`` instance.
+    """
+    event.status = new_status
+    db.flush()
+    return event

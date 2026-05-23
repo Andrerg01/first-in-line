@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.schemas.claims import EventClaimResponse
-from app.schemas.events import EventDetail, EventListItem
+from app.schemas.events import EventDetail, EventListItem, EventStatusUpdate
 from app.schemas.sources import EventSourceResponse
 from app.services import event_service
 
@@ -67,3 +67,16 @@ def get_event_claims(
     """Return extracted claims associated with an event."""
     claims = event_service.get_event_claims(db, event_id)
     return [EventClaimResponse.model_validate(c) for c in claims]
+
+
+@router.patch("/{event_id}/status", response_model=EventDetail)
+def patch_event_status(
+    event_id: uuid.UUID,
+    body: EventStatusUpdate,
+    db: Session = Depends(get_db),
+) -> EventDetail:
+    """Update the status of an event (verify, reject, etc.)."""
+    event = event_service.patch_event_status(db, event_id, body.status)
+    db.commit()
+    db.refresh(event)
+    return EventDetail.model_validate(event)
