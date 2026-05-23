@@ -124,23 +124,24 @@ Follow low-cost defaults:
 
 Implement in order:
 1. Phase 0: repository and local skeleton ✅ COMPLETE
-2. Phase 1: schema and backend CRUD
-3. Phase 2: basic frontend
-4. Phase 3: manual URL ingestion
+2. Phase 1: schema and backend CRUD ✅ COMPLETE
+3. Phase 2: basic frontend ✅ COMPLETE
+4. Phase 3: manual URL ingestion ✅ COMPLETE
 5. Phase 4+: scheduled search, LangGraph, dedupe/review, map/calendar, cloud, CI/CD, notifications, polish
 
 Do not overbuild future phases while the current phase is incomplete.
 
-## Current Execution Focus (Phase 1)
+## Current Execution Focus (Phase 4)
 
-Required Phase 1 deliverables:
-- Alembic migrations
-- SQLAlchemy/SQLModel models (locations, events, sources, claims)
-- CRUD repositories
-- Event list endpoint
-- Event detail endpoint
-- Source and claims endpoints
-- Seed data script
+Phase 3 is complete. The next phase covers scheduled automated search ingestion,
+LangGraph orchestration, deduplication/review workflows, map/calendar views,
+cloud deployment, CI/CD, and notifications.
+
+Required Phase 4 entry criteria:
+- Scheduled scraper job (cron or worker)
+- LangGraph pipeline nodes for search → fetch → extract → dedupe
+- Admin review queue for candidate events
+- Map view (Phase 5 stretch)
 
 ## Git Workflow
 

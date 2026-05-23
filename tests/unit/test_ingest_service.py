@@ -17,6 +17,7 @@ from app.models.processing import ProcessingDecision
 from app.models.sources import EventSource, SourceDocument
 from app.schemas.ingest import LLMClaim, LLMExtractionResult, ManualIngestResponse
 from app.services import ingest_service
+from app.exceptions import ConfigurationError, ExtractionError, MCPError
 
 
 # ---------------------------------------------------------------------------
@@ -233,3 +234,103 @@ class TestParseEventDate:
 
     def test_invalid_string_returns_none(self):
         assert ingest_service._parse_event_date("not-a-date") is None
+
+
+# ---------------------------------------------------------------------------
+# Tests — failed fetch path (HIGH-3)
+# ---------------------------------------------------------------------------
+
+
+_FETCH_FAILED = {
+    "url": "https://example.com/broken",
+    "canonical_url": None,
+    "domain": "example.com",
+    "title": None,
+    "visible_text": "",
+    "http_status": None,
+    "content_type": None,
+    "fetch_status": "failed",
+    "error_message": "Timeout",
+}
+
+
+class TestIngestManualUrlFetchFailed:
+    def test_relevant_false_on_failed_fetch(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_FAILED
+        )
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/broken")
+        assert resp.relevant is False
+
+    def test_duplicate_false_on_failed_fetch(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_FAILED
+        )
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/broken")
+        assert resp.duplicate is False
+
+    def test_fetch_status_propagated(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_FAILED
+        )
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/broken")
+        assert resp.fetch_status == "failed"
+
+    def test_source_document_persisted_with_null_hash(self, db_session, monkeypatch):
+        """Failed fetches must NOT write a hash — prevents empty-string hash collisions."""
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_FAILED
+        )
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/broken")
+        doc = db_session.get(SourceDocument, resp.source_id)
+        assert doc is not None
+        assert doc.visible_text_hash is None
+
+    def test_no_event_created_on_failed_fetch(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_FAILED
+        )
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/broken")
+        assert resp.event_id is None
+
+    def test_two_failed_fetches_do_not_collide(self, db_session, monkeypatch):
+        """Two different URLs that fail should each create their own source document."""
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: {**_FETCH_FAILED, "url": url}
+        )
+        resp1 = ingest_service.ingest_manual_url(db_session, "https://a.com/")
+        resp2 = ingest_service.ingest_manual_url(db_session, "https://b.com/")
+        assert resp1.source_id != resp2.source_id
+
+
+# ---------------------------------------------------------------------------
+# Tests — configuration / OpenAI error paths (HIGH-4)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestManualUrlOpenAIErrors:
+    def test_missing_api_key_raises_configuration_error(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_OK
+        )
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_normalize_text", lambda text: _NORM_OK
+        )
+        monkeypatch.setattr(ingest_service.settings, "openai_api_key", "")
+        with pytest.raises(ConfigurationError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+    def test_openai_exception_raises_extraction_error(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_OK
+        )
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_normalize_text", lambda text: _NORM_OK
+        )
+
+        def _boom(url: str, text: str):
+            raise ExtractionError("Event extraction service is unavailable.")
+
+        monkeypatch.setattr(ingest_service, "_extract_event_data", _boom)
+        with pytest.raises(ExtractionError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")

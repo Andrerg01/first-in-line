@@ -15,6 +15,7 @@ Future tools (LangGraph Phase 5):
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import logging
 import re
 from urllib.parse import urlparse
@@ -28,9 +29,14 @@ log = logging.getLogger(__name__)
 
 app = FastAPI(title="Grand Opening Radar MCP Server", version="0.1.0")
 
+# Tools currently implemented and callable
 TOOL_LIST = [
     "web.fetch_page",
     "web.normalize_text",
+]
+
+# Planned tools — not yet implemented; kept here to document the roadmap
+_PLANNED_TOOLS = [
     "web.search",
     "geo.geocode_address",
     "db.find_source_by_hash",
@@ -82,6 +88,52 @@ class NormalizeTextResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+_INTERNAL_HOSTS: frozenset[str] = frozenset(
+    {"localhost", "postgres", "backend-api", "mcp-server", "worker"}
+)
+
+
+def _is_safe_url(url: str) -> tuple[bool, str]:
+    """Validate URL scheme and block private/internal hosts to prevent SSRF.
+
+    Args:
+        url: URL string to validate.
+
+    Returns:
+        Tuple of (is_safe, reason). ``reason`` is empty when safe.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception as exc:  # pragma: no cover
+        return False, f"Invalid URL: {exc}"
+
+    if parsed.scheme not in ("http", "https"):
+        return False, f"Scheme '{parsed.scheme}' is not allowed; only http and https."
+
+    host = parsed.hostname
+    if not host:
+        return False, "URL must specify a host."
+
+    if host.lower() in _INTERNAL_HOSTS:
+        return False, f"Host '{host}' is not allowed (internal service)."
+
+    try:
+        addr = ipaddress.ip_address(host)
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+        ):
+            return False, f"IP '{host}' resolves to a private/reserved range."
+    except ValueError:
+        # Not a bare IP address — hostname is acceptable
+        pass
+
+    return True, ""
 
 
 def _extract_visible_text(html: str) -> tuple[str, str | None]:
@@ -158,6 +210,21 @@ def fetch_page(body: FetchPageRequest) -> FetchPageResponse:
     Returns:
         A FetchPageResponse with visible text and fetch metadata.
     """
+    safe, reason = _is_safe_url(body.url)
+    if not safe:
+        log.warning("fetch_page blocked unsafe URL %s: %s", body.url, reason)
+        return FetchPageResponse(
+            url=body.url,
+            canonical_url=None,
+            domain=None,
+            title=None,
+            visible_text="",
+            http_status=None,
+            content_type=None,
+            fetch_status="failed",
+            error_message=f"URL not allowed: {reason}",
+        )
+
     parsed = urlparse(body.url)
     domain = parsed.netloc or None
 

@@ -14,18 +14,15 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import HTTPException, status
 from openai import OpenAI
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.exceptions import ConfigurationError, ExtractionError, MCPError
 from app.models.events import Event
-from app.models.sources import EventSource
 from app.repositories import (
     claims_repository,
     event_repository,
@@ -101,12 +98,9 @@ def _call_mcp_fetch_page(url: str) -> dict:
             resp = client.post(endpoint, json={"url": url})
         resp.raise_for_status()
         return resp.json()
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         log.error("MCP fetch_page failed for %s: %s", url, exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Page fetch via MCP failed: {exc}",
-        ) from exc
+        raise MCPError("Page fetch service is unavailable.") from exc
 
 
 def _call_mcp_normalize_text(text: str) -> dict:
@@ -127,12 +121,9 @@ def _call_mcp_normalize_text(text: str) -> dict:
             resp = client.post(endpoint, json={"text": text})
         resp.raise_for_status()
         return resp.json()
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         log.error("MCP normalize_text failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Text normalisation via MCP failed: {exc}",
-        ) from exc
+        raise MCPError("Text processing service is unavailable.") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -154,10 +145,7 @@ def _extract_event_data(url: str, normalized_text: str) -> LLMExtractionResult:
         HTTPException: 422 if the API key is missing; 502 on call/parse failure.
     """
     if not settings.openai_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="OPENAI_API_KEY is not configured on the server.",
-        )
+        raise ConfigurationError("OPENAI_API_KEY is not configured on the server.")
 
     client = OpenAI(api_key=settings.openai_api_key)
     user_content = (
@@ -177,10 +165,7 @@ def _extract_event_data(url: str, normalized_text: str) -> LLMExtractionResult:
         )
     except Exception as exc:
         log.error("OpenAI extraction failed for %s: %s", url, exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"OpenAI extraction failed: {exc}",
-        ) from exc
+        raise ExtractionError("Event extraction service is unavailable.") from exc
 
     raw_json = completion.choices[0].message.content or "{}"
     try:
@@ -190,10 +175,7 @@ def _extract_event_data(url: str, normalized_text: str) -> LLMExtractionResult:
         log.error(
             "OpenAI output validation failed for %s: %s\nRaw: %s", url, exc, raw_json
         )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"OpenAI output could not be validated: {exc}",
-        ) from exc
+        raise ExtractionError("Extraction output was invalid.") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -243,8 +225,49 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
     # 1. Fetch page via MCP -----------------------------------------------
     fetch_result = _call_mcp_fetch_page(url)
 
-    # 2. Normalise text via MCP -------------------------------------------
+    # Guard: early-exit if fetch failed or yielded no visible text.
+    # Using hash("") for dedup would collide across all failed fetches.
+    fetch_status = fetch_result.get("fetch_status", "failed")
     visible_text: str = fetch_result.get("visible_text") or ""
+    if fetch_status != "success" or not visible_text.strip():
+        source_doc = source_repository.create_source_document(
+            db,
+            url=url,
+            canonical_url=fetch_result.get("canonical_url") or url,
+            domain=fetch_result.get("domain"),
+            title=fetch_result.get("title"),
+            visible_text=visible_text,
+            visible_text_hash=None,
+            fetch_status=fetch_status,
+            http_status=fetch_result.get("http_status"),
+            content_type=fetch_result.get("content_type"),
+            fetch_method="manual",
+            fetched_at=datetime.now(timezone.utc),
+            error_message=fetch_result.get("error_message"),
+        )
+        processing_repository.create_processing_decision(
+            db,
+            source_document_id=source_doc.id,
+            event_id=None,
+            decision_type="manual_ingest",
+            decision_value="fetch_failed",
+            reason=(
+                f"fetch_status={fetch_status}; "
+                f"error={fetch_result.get('error_message')}"
+            ),
+            model_name=None,
+        )
+        db.commit()
+        error_msg = fetch_result.get("error_message") or "empty content"
+        return ManualIngestResponse(
+            source_id=source_doc.id,
+            duplicate=False,
+            relevant=False,
+            fetch_status=fetch_status,
+            message=f"Page fetch failed: {error_msg}",
+        )
+
+    # 2. Normalise text via MCP -------------------------------------------
     norm_result = _call_mcp_normalize_text(visible_text)
     text_hash: str = norm_result["text_hash"]
     normalized_text: str = norm_result["normalized_text"]
@@ -252,12 +275,14 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
     # 3. Deduplication check ----------------------------------------------
     existing_doc = source_repository.find_source_by_hash(db, text_hash)
     if existing_doc:
-        event_row = db.scalars(
-            select(EventSource)
-            .where(EventSource.source_document_id == existing_doc.id)
-            .limit(1)
-        ).first()
-        event = db.get(Event, event_row.event_id) if event_row and event_row.event_id else None
+        event_row = source_repository.get_event_source_for_source_document(
+            db, existing_doc.id
+        )
+        event: Event | None = (
+            event_repository.get_event_by_id(db, event_row.event_id)
+            if event_row
+            else None
+        )
         return ManualIngestResponse(
             source_id=existing_doc.id,
             duplicate=True,
@@ -317,12 +342,9 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
             status="candidate",
             confidence_score=extraction.confidence_score,
         )
-        link = EventSource(
-            event_id=event.id,
-            source_document_id=source_doc.id,
+        source_repository.create_event_source(
+            db, event_id=event.id, source_document_id=source_doc.id
         )
-        db.add(link)
-        db.flush()
 
     # 7. Persist claims ---------------------------------------------------
     claims_count = 0

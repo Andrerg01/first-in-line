@@ -155,3 +155,38 @@ class TestManualIngestEndpoint:
         claims_resp = test_client.get(f"/api/events/{event_id}/claims")
         assert claims_resp.status_code == 200
         assert len(claims_resp.json()) == 1
+
+    def test_invalid_url_scheme_returns_422(self, test_client):
+        """Non-HTTP/S scheme must be rejected before any service call."""
+        resp = test_client.post(
+            "/api/ingest/manual-url", json={"url": "file:///etc/passwd"}
+        )
+        assert resp.status_code == 422
+
+    def test_failed_fetch_returns_200_with_relevant_false(
+        self, test_client, monkeypatch
+    ):
+        """A page that fails to fetch is persisted but not extracted."""
+        monkeypatch.setattr(
+            ingest_service,
+            "_call_mcp_fetch_page",
+            lambda url: {
+                "url": url,
+                "canonical_url": None,
+                "domain": "example.com",
+                "title": None,
+                "visible_text": "",
+                "http_status": None,
+                "content_type": None,
+                "fetch_status": "failed",
+                "error_message": "Timeout",
+            },
+        )
+        resp = test_client.post(
+            "/api/ingest/manual-url", json={"url": "https://example.com/broken"}
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["relevant"] is False
+        assert data["fetch_status"] == "failed"
+        assert data["event_id"] is None

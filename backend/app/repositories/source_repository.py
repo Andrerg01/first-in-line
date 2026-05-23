@@ -62,6 +62,26 @@ def find_source_by_hash(db: Session, text_hash: str) -> SourceDocument | None:
     return db.scalars(stmt).first()
 
 
+def get_event_source_for_source_document(
+    db: Session, source_document_id: uuid.UUID
+) -> EventSource | None:
+    """Return the first EventSource linking this source document to an event.
+
+    Args:
+        db: Active database session.
+        source_document_id: UUID of the source document.
+
+    Returns:
+        The matching ``EventSource`` or ``None`` if none exists.
+    """
+    stmt = (
+        select(EventSource)
+        .where(EventSource.source_document_id == source_document_id)
+        .limit(1)
+    )
+    return db.scalars(stmt).first()
+
+
 def create_source_document(db: Session, **kwargs: Any) -> SourceDocument:
     """Insert a new source document and return it.
 
