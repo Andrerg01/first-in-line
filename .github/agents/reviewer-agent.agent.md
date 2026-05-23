@@ -27,7 +27,9 @@ Evaluate in this order and stop escalating if you find critical issues:
 4. **Test coverage** — Is there a test for the happy path, invalid input, and at least one error path?
 5. **Style and conventions** — Type hints, docstrings, naming, file size under 300 lines.
 6. **Documentation** — Docs updated if behavior or contracts changed.
-7. **Cleanup** — No temporary files, no debug code, no commented-out blocks.
+7. **Git workflow** — Branch named correctly (`feat/`, `fix/`, `refactor/`, `docs/`, `test/`), PR targets `develop` not `main`.
+8. **Versioning** — `VERSION` file bumped at the correct SemVer level (PATCH for fixes/refactors, MINOR for features, MAJOR for milestones).
+9. **Cleanup** — No temporary files, no debug code, no commented-out blocks.
 
 ## Output Format
 

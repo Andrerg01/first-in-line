@@ -29,6 +29,7 @@ Before starting any change, read:
 - NEVER move code to the wrong layer just to reduce file size.
 - NEVER rename public API endpoints or DB column names without a migration plan.
 - If tests do not exist yet, write them BEFORE refactoring so you have a safety net.
+- NEVER push directly to `main` or `develop`.
 
 ## Definition of Done
 
@@ -37,3 +38,5 @@ A refactor is done only when:
 - no behavior has changed
 - the target structural problem is resolved
 - no new files exceed 300 lines without justification
+- `VERSION` file is bumped (PATCH for refactors)
+- branch is named `refactor/...` and PR targets `develop`

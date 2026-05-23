@@ -30,6 +30,7 @@ Before diagnosing, read:
 - NEVER widen an exception handler to silence a bug.
 - NEVER change unrelated code in the same fix.
 - NEVER skip the regression test without explicitly stating why.
+- NEVER push directly to `main` or `develop`.
 
 ## Definition of Done
 
@@ -38,3 +39,5 @@ A bug fix is done only when:
 - the fix is in the correct layer
 - the regression test passes
 - root cause is documented
+- `VERSION` file is bumped (PATCH for bug fixes)
+- branch is named `fix/...` and PR targets `develop`

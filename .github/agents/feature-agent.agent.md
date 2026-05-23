@@ -43,6 +43,8 @@ Before writing a single line of code, read these files in full:
 - NEVER call MCP from the frontend.
 - NEVER expose run_sql, delete_all, or arbitrary_http_post in MCP.
 - NEVER skip tests without explicitly calling out the gap.
+- NEVER push directly to `main` or `develop`.
+- NEVER open a PR to `main` from a feature branch.
 
 ## Definition of Done
 
@@ -52,3 +54,5 @@ A feature is done only when:
 - docs are updated
 - no temporary files remain
 - the change stays inside current phase scope
+- `VERSION` file is bumped (MINOR for new features)
+- branch is named `feat/...` and PR targets `develop`
