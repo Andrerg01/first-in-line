@@ -2,6 +2,12 @@
 
 Describe what changed and why.
 
+## Git Workflow Checklist
+
+- [ ] Branch named correctly (`feat/`, `fix/`, `refactor/`, `docs/`, or `test/`)
+- [ ] PR targets `develop`, not `main`
+- [ ] `VERSION` file bumped (PATCH / MINOR / MAJOR — delete inapplicable)
+
 ## Architecture Checklist
 
 - [ ] Boundary rules respected (frontend -> backend only, bounded MCP, etc.)

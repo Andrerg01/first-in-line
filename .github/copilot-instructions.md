@@ -123,34 +123,58 @@ Follow low-cost defaults:
 ## Phase-Driven Delivery
 
 Implement in order:
-1. Phase 0: repository and local skeleton
+1. Phase 0: repository and local skeleton ✅ COMPLETE
 2. Phase 1: schema and backend CRUD
 3. Phase 2: basic frontend
 4. Phase 3: manual URL ingestion
 5. Phase 4+: scheduled search, LangGraph, dedupe/review, map/calendar, cloud, CI/CD, notifications, polish
 
-Do not overbuild future phases while Phase 0 is incomplete.
+Do not overbuild future phases while the current phase is incomplete.
 
-## Current Execution Focus (Phase 0)
+## Current Execution Focus (Phase 1)
 
-Required Phase 0 deliverables:
-- monorepo structure
-- docker-compose.yml
-- backend health endpoint
-- frontend placeholder page
-- Postgres container
-- MCP server skeleton with health/tool-list
-- worker no-op CLI command
-- .env.example
-- initial README
+Required Phase 1 deliverables:
+- Alembic migrations
+- SQLAlchemy/SQLModel models (locations, events, sources, claims)
+- CRUD repositories
+- Event list endpoint
+- Event detail endpoint
+- Source and claims endpoints
+- Seed data script
 
-Phase 0 exit criteria:
-- docker compose up succeeds
-- frontend loads
-- backend health returns status ok
-- Postgres accepts connections
-- MCP server starts
-- worker no-op command runs
+## Git Workflow
+
+Branch strategy:
+- `main` — protected; only receives PRs from `develop` (releases)
+- `develop` — protected; integration branch; receives all feature/fix/refactor PRs
+- Feature/fix/refactor branches: always created from `develop`
+
+Branch naming:
+- `feat/short-description` — new feature
+- `fix/short-description` — bug fix
+- `refactor/short-description` — structural improvement
+- `docs/short-description` — documentation only
+- `test/short-description` — tests only
+
+Rules:
+- NEVER push directly to `main` or `develop`.
+- NEVER open a PR to `main` from a feature branch; PRs go to `develop`.
+- Every PR must pass tests and reviewer approval before merging.
+- Squash or rebase to keep `develop` history clean.
+
+## Versioning
+
+The single source of truth for version is the `VERSION` file at the repository root.
+
+Format: `MAJOR.MINOR.PATCH` (SemVer)
+
+Bump rules:
+- PATCH — bug fixes, documentation, style, test-only changes
+- MINOR — new feature, new endpoint, new service, new model
+- MAJOR — phase completion milestone, breaking API change, or explicitly requested
+
+Every PR that changes code must include a `VERSION` bump as part of the same commit.
+The reviewer must verify the bump is present and the correct level.
 
 ## Coding Conventions
 
