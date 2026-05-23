@@ -1,42 +1,100 @@
 # Grand Opening Radar
 
-Grand Opening Radar discovers nearby business grand openings and preserves source evidence, extracted claims, and canonical events.
+Grand Opening Radar discovers nearby business grand openings and preserves source evidence, extracted claims, and canonical events — starting with Greenville, SC.
 
-## Phase 0 Status
+## Status
 
-This repository now includes:
-- monorepo folders: frontend, backend, worker, mcp_server, shared, infra, docs
-- docker-compose baseline
-- FastAPI backend with health endpoint
-- frontend placeholder page in Docker and React scaffold in source
-- Postgres container
-- MCP server skeleton with health and tools endpoint
-- worker no-op CLI command
-- environment template
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 0 | Monorepo skeleton, Docker Compose, service stubs | ✅ Complete |
+| 1 | Database schema, Alembic migrations, CRUD backend, seed data | ✅ Complete |
+| 2 | Basic frontend — event list, event detail, admin verify/reject | ✅ Complete |
+| 3+ | Manual URL ingestion, LangGraph pipeline, map/calendar, CI/CD | Planned |
 
-## Local Run
+Current version: see `VERSION` file.
 
-1. Optionally copy .env.example to .env and adjust values.
-2. Start containers:
+## Local Setup
 
-   docker compose up --build
+### Prerequisites
 
-3. Verify services:
-- backend health: http://localhost:8000/health
-- frontend: http://localhost:5173
-- mcp health: http://localhost:9000/health
-- mcp tools: http://localhost:9000/tools
+- Docker Desktop
+- Python 3.12+ (for running tests and migrations locally)
+- Node.js 20+ (for frontend dev server)
 
-## Worker No-op Command
+### 1. Configure environment
 
-Run worker skeleton command locally:
+```bash
+cp .env.example .env
+# Edit .env — set POSTGRES_PASSWORD at minimum.
+# DATABASE_URL must use the postgresql+psycopg:// scheme (psycopg v3).
+```
 
-python -m app.cli noop
+> **Important:** The backend Docker image ships `psycopg` v3, not `psycopg2`.
+> Always use `postgresql+psycopg://` in `DATABASE_URL` — never `postgresql://`.
 
-From directory: worker
+### 2. Start the stack
 
-## Next Steps
+```bash
+docker compose up --build
+```
 
-1. Phase 1 database schema and migrations.
-2. Event CRUD API endpoints.
-3. Seed data and first frontend event list.
+Services:
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:5173 |
+| Backend API | http://localhost:8000 |
+| API docs (Swagger) | http://localhost:8000/docs |
+| MCP server | http://localhost:9000 |
+| Postgres | localhost:5432 |
+
+### 3. Apply migrations and seed data
+
+Run once after the stack is first started (or after a schema change):
+
+```bash
+# From the repo root
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/grand_openings \
+  python -m alembic upgrade head
+
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/grand_openings \
+  python seed_data.py
+```
+
+> Local migration/seed requires `psycopg[binary]` installed locally:
+> `pip install "psycopg[binary]"`
+
+Run from the `backend/` directory (alembic.ini lives there).
+
+## Running Tests
+
+```bash
+# Unit + integration (no Docker required — uses SQLite in-memory)
+python -m pytest tests/unit/ tests/integration/ -v
+
+# E2E smoke (requires docker compose up -d)
+python -m pytest tests/e2e/ -v
+```
+
+## Architecture
+
+```
+Browser → nginx (frontend:80) → /api/* → FastAPI (backend-api:8000) → Postgres
+                                          ↓
+                                    MCP server (bounded tools only)
+```
+
+- Frontend talks only to the backend API.
+- Frontend never calls MCP directly.
+- LangGraph (Phase 4+) orchestrates ingestion workflows.
+- Postgres is the system of record.
+
+## Data Layers
+
+1. `source_documents` — raw fetched pages
+2. `event_claims` — extracted atomic claims with confidence scores
+3. `events` — canonical event records (locations, status, category)
+
+## Project Standards
+
+See `docs/standards/README.md` for coding conventions, architecture guardrails, and testing strategy.
+

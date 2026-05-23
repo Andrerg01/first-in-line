@@ -71,3 +71,14 @@ def test_mcp_tools_returns_approved_catalog() -> None:
         "db.insert_candidate_event",
     }
     assert expected.issubset(set(tools))
+
+
+@pytest.mark.skipif(
+    not _service_reachable(BACKEND_URL),
+    reason="Backend not running — start with: docker compose up -d",
+)
+def test_events_list_endpoint_reachable() -> None:
+    """GET /api/events should return 200 with a JSON array."""
+    response = httpx.get(f"{BACKEND_URL}/api/events", timeout=5.0)
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)

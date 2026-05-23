@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -25,6 +26,12 @@ class EventListItem(BaseModel):
     confidence_score: float | None
     created_at: datetime
     updated_at: datetime
+
+
+class EventStatusUpdate(BaseModel):
+    """Request body for updating an event's status."""
+
+    status: Literal["candidate", "verified", "rejected", "needs_review", "merged", "expired"]
 
 
 class EventDetail(BaseModel):
