@@ -29,13 +29,29 @@ class SearchRunOut(BaseModel):
     query_set_version: str | None
     notes: str | None
     created_at: datetime
+    # Aggregate stats (nullable — only set when the run finishes).
+    queries_executed: int | None = None
+    search_results_found: int | None = None
+    urls_attempted: int | None = None
+    source_docs_created: int | None = None
+    source_docs_skipped: int | None = None
+    fetch_errors: int | None = None
+    elapsed_seconds: float | None = None
 
 
 class SearchRunStatusUpdate(BaseModel):
-    """Payload to update a search run's terminal status."""
+    """Payload to update a search run's terminal status and aggregate stats."""
 
     status: str  # completed | failed | partial | cancelled
     notes: str | None = None
+    # Optional aggregate stats written when the worker closes the run.
+    queries_executed: int | None = None
+    search_results_found: int | None = None
+    urls_attempted: int | None = None
+    source_docs_created: int | None = None
+    source_docs_skipped: int | None = None
+    fetch_errors: int | None = None
+    elapsed_seconds: float | None = None
 
 
 class SearchResultCreate(BaseModel):

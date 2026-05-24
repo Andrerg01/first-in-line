@@ -135,20 +135,69 @@ def finish_search_run(
     *,
     status: str,
     notes: str | None = None,
+    queries_executed: int | None = None,
+    search_results_found: int | None = None,
+    urls_attempted: int | None = None,
+    source_docs_created: int | None = None,
+    source_docs_skipped: int | None = None,
+    fetch_errors: int | None = None,
+    elapsed_seconds: float | None = None,
 ) -> None:
-    """Mark a search run as completed or failed.
+    """Mark a search run as completed or failed and persist aggregate stats.
 
     Args:
         run_id: UUID of the SearchRun to close.
         status: Terminal status string (completed | failed | partial).
         notes: Optional notes to store on the run.
+        queries_executed: Number of search queries that ran.
+        search_results_found: Total search result rows saved.
+        urls_attempted: Number of URLs fetch was attempted for.
+        source_docs_created: New source documents persisted.
+        source_docs_skipped: Duplicate documents skipped.
+        fetch_errors: Number of fetch or store errors.
+        elapsed_seconds: Total wall-clock time for the run.
     """
+    payload: dict = {"status": status, "notes": notes}
+    if queries_executed is not None:
+        payload["queries_executed"] = queries_executed
+    if search_results_found is not None:
+        payload["search_results_found"] = search_results_found
+    if urls_attempted is not None:
+        payload["urls_attempted"] = urls_attempted
+    if source_docs_created is not None:
+        payload["source_docs_created"] = source_docs_created
+    if source_docs_skipped is not None:
+        payload["source_docs_skipped"] = source_docs_skipped
+    if fetch_errors is not None:
+        payload["fetch_errors"] = fetch_errors
+    if elapsed_seconds is not None:
+        payload["elapsed_seconds"] = elapsed_seconds
     _api_request(
         "PATCH",
         f"/api/ingest/search-run/{run_id}",
-        {"status": status, "notes": notes},
+        payload,
         label="finish_search_run",
     )
+
+
+def record_tool_calls(run_id: uuid.UUID, tool_calls: list[dict]) -> int:
+    """Bulk-insert pipeline tool call telemetry records.
+
+    Args:
+        run_id: UUID of the parent SearchRun.
+        tool_calls: List of tool call dicts matching the ``ToolCallCreate``
+            schema fields.
+
+    Returns:
+        Number of rows saved.
+    """
+    data = _api_request(
+        "POST",
+        f"/api/ingest/search-run/{run_id}/tool-calls",
+        {"tool_calls": tool_calls},
+        label="record_tool_calls",
+    )
+    return int(data.get("saved", 0))
 
 
 def save_search_results(

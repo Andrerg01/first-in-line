@@ -65,17 +65,22 @@ CronJob starts
   -> create search_run
   -> load target locations
   -> generate search queries
-  -> execute search
-  -> store search_results
-  -> fetch result pages
-  -> normalize/hash
-  -> skip duplicates
-  -> store new source_documents
-  -> classify relevance
-  -> extract claims
-  -> find similar events
-  -> save candidate events
-  -> mark run completed
+  -> for each query (with QUERY_INTERVAL_SECONDS delay between):
+       -> web.search (telemetry recorded)
+       -> store search_results
+       -> canonicalize URLs
+       -> dedupe across queries (seen-URL set)
+  -> for each unique URL (up to max_urls_per_run):
+       -> web.fetch_page (telemetry recorded)
+       -> web.normalize_text (telemetry recorded)
+       -> hash normalized text
+       -> db.store_source_document (telemetry recorded, skip if duplicate hash)
+  -> flush all tool-call telemetry to pipeline_tool_calls
+  -> finish_search_run with aggregate stats
+  -> (future) classify relevance
+  -> (future) extract claims
+  -> (future) find similar events
+  -> (future) save candidate events
 ```
 
 ## Search Query Strategy
@@ -227,6 +232,36 @@ Example:
 ```
 
 These prompts should be stored in `processing_decisions` or a later `followup_queries` table.
+
+## Telemetry
+
+Every MCP tool call is recorded as a `pipeline_tool_calls` row in Postgres.
+
+Schema: `id`, `search_run_id`, `tool_name`, `input_summary`, `outcome`, `duration_ms`,
+`http_status`, `error_message`, `attempt_number`, `created_at`.
+
+Outcome codes: `success`, `error`, `timeout`, `rate_limit`, `duplicate`, `skipped`.
+
+Aggregate stats (`queries_executed`, `search_results_found`, `urls_attempted`,
+`source_docs_created`, `source_docs_skipped`, `fetch_errors`, `elapsed_seconds`) are written to
+`search_runs` when the run finishes. These exist for fast dashboard queries without scanning
+`pipeline_tool_calls`.
+
+Telemetry flush failures are non-fatal — they are logged at WARNING and the run continues.
+
+## Rate-Limit Handling
+
+DuckDuckGo rate-limits by hanging rather than returning HTTP 429.
+
+Protections in place:
+
+| Layer | Mechanism |
+|-------|-----------|
+| MCP server (`web.search`) | `_SEARCH_TIMEOUT=8s` hard timeout per query |
+| Worker `mcp_client.search()` | `timeout=12s`, `max_retries=1`; logs `RATE LIMIT WARNING` when all retries time out |
+| Worker pipeline | `QUERY_INTERVAL_SECONDS` (default `2.0`) sleep between consecutive queries |
+
+Set `QUERY_INTERVAL_SECONDS=0` in test environments to keep tests fast.
 
 ---
 

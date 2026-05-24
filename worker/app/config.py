@@ -9,6 +9,14 @@ class WorkerSettings:
     """Configuration for the scheduled worker.
 
     Reads from environment variables with sensible local-dev defaults.
+
+    Rate-limit protection:
+        QUERY_INTERVAL_SECONDS controls the mandatory pause between consecutive
+        search queries.  The default (2 s) provides a conservative buffer when
+        DuckDuckGo allows requests.  If the container IP is actively rate-limited
+        (recognised by repeated timeouts from the MCP server) the worker logs a
+        prominent WARNING — but the actual cool-down must be handled externally
+        (wait ~30–60 minutes before the next run).
     """
 
     backend_api_url: str
@@ -18,6 +26,7 @@ class WorkerSettings:
     request_timeout: float
     backoff_base: float
     max_retries: int
+    query_interval_seconds: float
 
     def __init__(self) -> None:
         self.backend_api_url = os.environ.get(
@@ -33,6 +42,9 @@ class WorkerSettings:
         self.request_timeout = float(os.environ.get("WORKER_REQUEST_TIMEOUT", "30.0"))
         self.backoff_base = float(os.environ.get("WORKER_BACKOFF_BASE", "1.0"))
         self.max_retries = int(os.environ.get("WORKER_MAX_RETRIES", "3"))
+        self.query_interval_seconds = float(
+            os.environ.get("QUERY_INTERVAL_SECONDS", "2.0")
+        )
 
 
 settings = WorkerSettings()

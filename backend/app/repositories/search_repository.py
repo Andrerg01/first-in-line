@@ -55,14 +55,28 @@ def update_search_run_status(
     *,
     status: str,
     notes: str | None = None,
+    queries_executed: int | None = None,
+    search_results_found: int | None = None,
+    urls_attempted: int | None = None,
+    source_docs_created: int | None = None,
+    source_docs_skipped: int | None = None,
+    fetch_errors: int | None = None,
+    elapsed_seconds: float | None = None,
 ) -> SearchRun | None:
-    """Update the status and finished_at of a SearchRun.
+    """Update the status, finished_at, and aggregate stats of a SearchRun.
 
     Args:
         db: Active database session.
         run_id: UUID of the SearchRun to update.
         status: New status string (completed | failed | partial | cancelled).
         notes: Optional notes to append or set.
+        queries_executed: Number of queries that ran.
+        search_results_found: Total search result rows stored.
+        urls_attempted: Number of URLs fetch was attempted for.
+        source_docs_created: New source documents created.
+        source_docs_skipped: Duplicate documents skipped.
+        fetch_errors: Number of fetch/store errors.
+        elapsed_seconds: Total wall-clock seconds for the run.
 
     Returns:
         The updated ``SearchRun``, or ``None`` if not found.
@@ -74,6 +88,20 @@ def update_search_run_status(
     run.finished_at = datetime.now(timezone.utc)
     if notes is not None:
         run.notes = notes
+    if queries_executed is not None:
+        run.queries_executed = queries_executed
+    if search_results_found is not None:
+        run.search_results_found = search_results_found
+    if urls_attempted is not None:
+        run.urls_attempted = urls_attempted
+    if source_docs_created is not None:
+        run.source_docs_created = source_docs_created
+    if source_docs_skipped is not None:
+        run.source_docs_skipped = source_docs_skipped
+    if fetch_errors is not None:
+        run.fetch_errors = fetch_errors
+    if elapsed_seconds is not None:
+        run.elapsed_seconds = elapsed_seconds
     db.commit()
     db.refresh(run)
     return run

@@ -558,12 +558,12 @@ def start_search_run(db: Session, body: SearchRunCreate) -> SearchRunOut:
 def finish_search_run(
     db: Session, run_id: uuid.UUID, body: SearchRunStatusUpdate
 ) -> SearchRunOut | None:
-    """Mark a SearchRun as completed or failed.
+    """Mark a SearchRun as completed or failed and persist aggregate stats.
 
     Args:
         db: Active database session.
         run_id: UUID of the SearchRun to close.
-        body: Terminal status and optional notes.
+        body: Terminal status, optional notes, and optional aggregate stats.
 
     Returns:
         Updated ``SearchRunOut``, or ``None`` if the run was not found.
@@ -573,10 +573,45 @@ def finish_search_run(
         run_id,
         status=body.status,
         notes=body.notes,
+        queries_executed=body.queries_executed,
+        search_results_found=body.search_results_found,
+        urls_attempted=body.urls_attempted,
+        source_docs_created=body.source_docs_created,
+        source_docs_skipped=body.source_docs_skipped,
+        fetch_errors=body.fetch_errors,
+        elapsed_seconds=body.elapsed_seconds,
     )
     if run is None:
         return None
     return SearchRunOut.model_validate(run)
+
+
+def save_tool_calls(
+    db: Session,
+    run_id: uuid.UUID,
+    tool_calls: list,
+) -> int | None:
+    """Bulk-insert pipeline tool call telemetry for a search run.
+
+    Args:
+        db: Active database session.
+        run_id: UUID of the parent SearchRun.
+        tool_calls: List of ``ToolCallCreate`` schema instances.
+
+    Returns:
+        Number of rows inserted, or ``None`` if the SearchRun was not found.
+    """
+    from app.repositories import telemetry_repository
+
+    run = search_repository.get_search_run(db, run_id)
+    if run is None:
+        log.warning("save_tool_calls: SearchRun %s not found, dropping records", run_id)
+        return None
+    records = [tc.model_dump() for tc in tool_calls]
+    count = telemetry_repository.bulk_insert_tool_calls(db, run_id, records)
+    db.commit()
+    log.info("Saved %d tool call records for run %s", count, run_id)
+    return count
 
 
 def save_search_results(

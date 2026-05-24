@@ -17,6 +17,7 @@ from app.schemas.search import (
     SourceDocumentFromFetch,
     SourceDocumentStoreResult,
 )
+from app.schemas.telemetry import ToolCallsBulkCreate
 from app.services import ingest_service
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
@@ -134,4 +135,33 @@ def store_source_document(
         newly created or was a duplicate.
     """
     return ingest_service.store_source_document_from_fetch(db, body)
+
+
+@router.post("/search-run/{run_id}/tool-calls", status_code=201)
+def add_tool_calls(
+    run_id: uuid.UUID,
+    body: ToolCallsBulkCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
+    """Bulk-insert pipeline tool call telemetry for a search run.
+
+    The worker calls this once per run after all MCP and API calls are
+    complete.  Records are stored in ``pipeline_tool_calls`` for diagnostics,
+    rate-limit analysis, and latency trending.
+
+    Args:
+        run_id: UUID of the parent SearchRun.
+        body: List of tool call records.
+        db: Injected database session.
+
+    Returns:
+        Dictionary with ``saved`` count.
+
+    Raises:
+        HTTPException 404: If no SearchRun exists for the given ID.
+    """
+    count = ingest_service.save_tool_calls(db, run_id, body.tool_calls)
+    if count is None:
+        raise HTTPException(status_code=404, detail="SearchRun not found")
+    return {"saved": count}
 

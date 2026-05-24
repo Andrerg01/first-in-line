@@ -85,6 +85,7 @@ class TestRunOnceHappyPath:
             lambda **kw: SearchRunRecord(id=run_id, status="running"),
         )
         monkeypatch.setattr(pipeline.api_client, "finish_search_run", lambda *a, **kw: None)
+        monkeypatch.setattr(pipeline.api_client, "record_tool_calls", lambda *a, **kw: 0)
         monkeypatch.setattr(
             pipeline.api_client, "save_search_results",
             lambda run_id, results: len(results),
@@ -107,6 +108,7 @@ class TestRunOnceHappyPath:
             pipeline.mcp_client, "normalize_text",
             lambda text: _make_normalize_response("hash1"),
         )
+        monkeypatch.setattr(pipeline.time, "sleep", lambda s: None)
 
         summary = pipeline.run_once(dry_run=False)
 
@@ -125,6 +127,7 @@ class TestRunOnceHappyPath:
             lambda **kw: SearchRunRecord(id=run_id, status="running"),
         )
         monkeypatch.setattr(pipeline.api_client, "finish_search_run", lambda *a, **kw: None)
+        monkeypatch.setattr(pipeline.api_client, "record_tool_calls", lambda *a, **kw: 0)
         monkeypatch.setattr(pipeline.api_client, "save_search_results", lambda *a, **kw: 1)
         monkeypatch.setattr(
             pipeline.api_client, "store_source_document",
@@ -148,6 +151,7 @@ class TestRunOnceHappyPath:
             pipeline.mcp_client, "normalize_text",
             lambda text: _make_normalize_response("samehash"),
         )
+        monkeypatch.setattr(pipeline.time, "sleep", lambda s: None)
 
         pipeline.run_once(dry_run=False)
 
@@ -167,7 +171,9 @@ class TestRunOnceFetchError:
             lambda **kw: SearchRunRecord(id=run_id, status="running"),
         )
         monkeypatch.setattr(pipeline.api_client, "finish_search_run", lambda *a, **kw: None)
+        monkeypatch.setattr(pipeline.api_client, "record_tool_calls", lambda *a, **kw: 0)
         monkeypatch.setattr(pipeline.api_client, "save_search_results", lambda *a, **kw: 1)
+        monkeypatch.setattr(pipeline.time, "sleep", lambda s: None)
 
         monkeypatch.setattr(
             pipeline.mcp_client, "search",
@@ -190,6 +196,8 @@ class TestRunOnceFetchError:
             lambda **kw: SearchRunRecord(id=run_id, status="running"),
         )
         monkeypatch.setattr(pipeline.api_client, "finish_search_run", lambda *a, **kw: None)
+        monkeypatch.setattr(pipeline.api_client, "record_tool_calls", lambda *a, **kw: 0)
+        monkeypatch.setattr(pipeline.time, "sleep", lambda s: None)
 
         monkeypatch.setattr(
             pipeline.mcp_client, "search",

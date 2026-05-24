@@ -1,16 +1,8 @@
 """Worker CLI entry point — dispatches named ingestion and maintenance commands."""
 import argparse
-import logging
 
 from worker.app import pipeline
-
-
-def _configure_logging(level: str = "INFO") -> None:
-    """Configure root logger with a simple timestamped format."""
-    logging.basicConfig(
-        level=level.upper(),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+from worker.app.logger import configure_logging
 
 
 def cmd_noop() -> int:
@@ -89,7 +81,7 @@ def main() -> int:
     )
 
     args = parser.parse_args()
-    _configure_logging(args.log_level)
+    configure_logging(level=args.log_level)
 
     if args.command == "noop":
         return cmd_noop()

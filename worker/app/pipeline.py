@@ -1,32 +1,48 @@
-﻿"""Worker pipeline â€” orchestrates a single scheduled discovery run.
+"""Worker pipeline -- orchestrates a single scheduled discovery run.
 
 Flow:
 1. Create a SearchRun record via the backend API.
 2. For each query template, call MCP web.search and persist search results.
+   A mandatory pause of QUERY_INTERVAL_SECONDS separates consecutive
+   queries to reduce DuckDuckGo rate-limit exposure.
 3. Collect unique canonical URLs from all results.
 4. For each URL (up to MAX_URLS_PER_RUN):
    a. Call MCP web.fetch_page.
    b. Call MCP web.normalize_text to get the content hash.
    c. Call the backend API to store (or skip if duplicate) the source document.
-5. Mark the SearchRun as completed (or failed on error).
+5. Flush all telemetry (tool call records) to the backend API.
+6. Mark the SearchRun as completed (or failed on error) with aggregate stats.
+
+Telemetry:
+  Every MCP tool call and backend API call is timed. Timing and outcome data
+  accumulates in a TelemetryCollector during the run and is flushed once to
+  POST /api/ingest/search-run/{run_id}/tool-calls before the run is closed.
+  Telemetry flush failures are logged as warnings and never abort the run.
+
+Rate-limit handling:
+  If DuckDuckGo rate-limits the container, search queries will fail with a
+  timeout. mcp_client.search() emits a prominent WARNING for each timed-out
+  query. Failed queries are counted and the run ends with status partial.
+  The rate limit typically clears after 30-60 minutes of inactivity.
 """
 
 from __future__ import annotations
 
-import logging
 import time
 import uuid
 from dataclasses import dataclass
 
 from worker.app import api_client, mcp_client
 from worker.app.config import settings
+from worker.app.logger import get_logger
 from worker.app.search_queries import QUERY_SET_VERSION, get_queries
+from worker.app.telemetry import TelemetryCollector, classify_outcome
 from worker.app.url_utils import canonicalize_url, is_valid_http_url
 
-log = logging.getLogger(__name__)
-
-_DIVIDER = "â•" * 60
+_DIVIDER = chr(0x2550) * 60  # box-drawing double horizontal line (=)
 _LOCATION = "Greenville, SC"
+
+log = get_logger(__name__)
 
 
 def _fmt_elapsed(start: float) -> str:
@@ -86,14 +102,13 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
     """
     start = time.monotonic()
     queries = get_queries()
+    collector = TelemetryCollector()
 
     _p(_DIVIDER)
-    _p("  Grand Opening Radar â€” Discovery Run")
+    _p("  Grand Opening Radar -- Discovery Run")
     _p(f"  Location : {_LOCATION}")
-    _p(f"  Queries  : {len(queries)}  Â·  URL cap: {settings.max_urls_per_run}  Â·  Dry run: {'Yes' if dry_run else 'No'}")
+    _p(f"  Queries  : {len(queries)}  |  URL cap: {settings.max_urls_per_run}  |  Dry run: {'Yes' if dry_run else 'No'}")
     _p(_DIVIDER)
-
-    log.info("Starting discovery run (dry_run=%s)", dry_run)
 
     # ------------------------------------------------------------------
     # 1. Create SearchRun record
@@ -107,18 +122,27 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
     else:
         run_id = uuid.uuid4()
 
+    log = get_logger(__name__, run_id=run_id)
     summary = RunSummary(run_id=run_id)
-    log.info("SearchRun created: id=%s", run_id)
+    log.info("Starting discovery run: run_id=%s dry_run=%s queries=%d", run_id, dry_run, len(queries))
 
     try:
-        _execute_run(summary, dry_run=dry_run, start=start, queries=queries)
+        _execute_run(summary, dry_run=dry_run, start=start, queries=queries, collector=collector)
     except Exception as exc:  # noqa: BLE001
         log.error("Discovery run failed with unexpected error: %s", exc, exc_info=True)
         summary.final_status = "failed"
         summary.notes = str(exc)
 
     # ------------------------------------------------------------------
-    # 5. Close the SearchRun
+    # 5. Flush telemetry records
+    # ------------------------------------------------------------------
+    summary.elapsed_seconds = time.monotonic() - start
+
+    if not dry_run:
+        collector.flush(run_id, api_client.record_tool_calls)
+
+    # ------------------------------------------------------------------
+    # 6. Close the SearchRun with aggregate stats
     # ------------------------------------------------------------------
     if not dry_run:
         try:
@@ -126,11 +150,16 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
                 run_id,
                 status=summary.final_status,
                 notes=summary.notes or None,
+                queries_executed=summary.queries_executed,
+                search_results_found=summary.search_results_found,
+                urls_attempted=summary.urls_attempted,
+                source_docs_created=summary.source_docs_created,
+                source_docs_skipped=summary.source_docs_skipped,
+                fetch_errors=summary.fetch_errors,
+                elapsed_seconds=summary.elapsed_seconds,
             )
         except Exception as exc:  # noqa: BLE001
             log.error("Failed to close SearchRun %s: %s", run_id, exc)
-
-    summary.elapsed_seconds = time.monotonic() - start
 
     log.info(
         "Run %s complete: status=%s queries=%d results=%d urls=%d created=%d skipped=%d errors=%d",
@@ -146,20 +175,23 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
     return summary
 
 
+
 def _execute_run(
     summary: RunSummary,
     *,
     dry_run: bool,
     start: float,
     queries: list[str],
+    collector: TelemetryCollector,
 ) -> None:
-    """Inner run logic â€” modifies summary in place.
+    """Inner run logic -- modifies summary in place.
 
     Args:
         summary: RunSummary to update with counts and status.
         dry_run: Skip actual API/MCP calls when True.
         start: Monotonic start time used for elapsed-time formatting.
         queries: Search query strings to execute.
+        collector: TelemetryCollector accumulating tool-call records.
     """
     seen_canonical: set[str] = set()
     ordered_urls: list[tuple[str, dict]] = []  # (canonical_url, meta)
@@ -169,23 +201,44 @@ def _execute_run(
     # ------------------------------------------------------------------
     # 2. Search phase
     # ------------------------------------------------------------------
-    _p(f"\n{_fmt_elapsed(start)} SEARCH â€” {n_queries} queries")
+    _p(f"\n{_fmt_elapsed(start)} SEARCH -- {n_queries} queries")
 
     for i, query in enumerate(queries, start=1):
-        _p(f"{_fmt_elapsed(start)} â”Œâ”€ Query {i:{w}d}/{n_queries}: {query!r}")
-        log.info("Searching: %r", query)
+        _p(f"{_fmt_elapsed(start)} +- Query {i:{w}d}/{n_queries}: {query!r}")
+        log.info("Searching [%d/%d]: %r", i, n_queries, query)
         summary.queries_executed += 1
 
         if dry_run:
-            _p(f"{_fmt_elapsed(start)} â””â”€ [dry run] skipped")
+            _p(f"{_fmt_elapsed(start)} \\- [dry run] skipped")
             log.info("[dry_run] would call MCP web.search for %r", query)
             continue
 
+        t0 = collector.start_timer()
         try:
             resp = mcp_client.search(query, max_results=settings.max_results_per_query)
+            collector.record(
+                tool_name="web.search",
+                input_summary=query,
+                outcome="success",
+                duration_ms=collector.elapsed_ms(t0),
+            )
+            log.debug(
+                "web.search: query=%r provider=%s results=%d duration_ms=%d",
+                query,
+                getattr(resp, "provider", "unknown"),
+                len(resp.results),
+                collector.elapsed_ms(t0),
+            )
         except Exception as exc:  # noqa: BLE001
+            collector.record(
+                tool_name="web.search",
+                input_summary=query,
+                outcome=classify_outcome(exc),
+                duration_ms=collector.elapsed_ms(t0),
+                error_message=str(exc),
+            )
             log.warning("Search failed for %r: %s", query, exc)
-            _p(f"{_fmt_elapsed(start)} â””â”€ âœ— ERROR  {exc}")
+            _p(f"{_fmt_elapsed(start)} \\- x ERROR  {exc}")
             continue
 
         result_dicts: list[dict] = []
@@ -218,13 +271,19 @@ def _execute_run(
                 log.warning("Failed to save results for %r: %s", query, exc)
 
         _p(
-            f"{_fmt_elapsed(start)} â””â”€ â†’ {len(result_dicts)} results"
-            f"  (+{new_this_query} new unique Â· {len(seen_canonical)} total unique)"
+            f"{_fmt_elapsed(start)} \\- -> {len(result_dicts)} results"
+            f"  (+{new_this_query} new unique | {len(seen_canonical)} total unique)"
         )
+        if i < n_queries and not dry_run and settings.query_interval_seconds > 0:
+            log.debug(
+                "Sleeping %.1fs between queries (QUERY_INTERVAL_SECONDS)",
+                settings.query_interval_seconds,
+            )
+            time.sleep(settings.query_interval_seconds)
 
     _p(
         f"\n{_fmt_elapsed(start)} Search done: "
-        f"{summary.search_results_found} results Â· {len(seen_canonical)} unique URLs"
+        f"{summary.search_results_found} results | {len(seen_canonical)} unique URLs"
     )
 
     # ------------------------------------------------------------------
@@ -235,7 +294,7 @@ def _execute_run(
     n_to_fetch = len(to_fetch)
     uw = len(str(n_to_fetch)) if n_to_fetch else 1
 
-    _p(f"\n{_fmt_elapsed(start)} FETCH â€” {n_to_fetch} URLs (cap: {cap})")
+    _p(f"\n{_fmt_elapsed(start)} FETCH -- {n_to_fetch} URLs (cap: {cap})")
 
     if n_to_fetch == 0:
         _p(f"{_fmt_elapsed(start)} Nothing to fetch.")
@@ -249,46 +308,101 @@ def _execute_run(
         summary.urls_attempted += 1
         eta_str = _eta(fetch_start, idx - 1, n_to_fetch)
 
-        _p(f"{_fmt_elapsed(start)} â”Œâ”€ URL {idx:{uw}d}/{n_to_fetch}  [{eta_str}]")
+        _p(f"{_fmt_elapsed(start)} +- URL {idx:{uw}d}/{n_to_fetch}  [{eta_str}]")
         _p(f"              {fetch_url[:90]}")
         if title_preview:
             _p(f"              {title_preview}")
-        log.info("Fetching: %s", fetch_url)
+        log.info("Fetching [%d/%d]: %s", idx, n_to_fetch, fetch_url)
 
         if dry_run:
-            _p(f"{_fmt_elapsed(start)} â””â”€ [dry run] skipped")
+            _p(f"{_fmt_elapsed(start)} \\- [dry run] skipped")
             log.info("[dry_run] would fetch %s", fetch_url)
             continue
 
+        # ---- web.fetch_page ----
+        t0 = collector.start_timer()
         try:
             fetch_resp = mcp_client.fetch_page(fetch_url)
+            log.debug(
+                "web.fetch_page: url=%s status=%s http=%s duration_ms=%d",
+                fetch_url,
+                fetch_resp.fetch_status,
+                fetch_resp.http_status,
+                collector.elapsed_ms(t0),
+            )
         except Exception as exc:  # noqa: BLE001
+            collector.record(
+                tool_name="web.fetch_page",
+                input_summary=fetch_url,
+                outcome=classify_outcome(exc),
+                duration_ms=collector.elapsed_ms(t0),
+                error_message=str(exc),
+            )
             log.warning("Fetch error for %s: %s", fetch_url, exc)
             summary.fetch_errors += 1
-            _p(f"{_fmt_elapsed(start)} â””â”€ âœ— FETCH ERROR  {exc}")
+            _p(f"{_fmt_elapsed(start)} \\- x FETCH ERROR  {exc}")
             _p(_running_totals(summary))
             continue
 
         if fetch_resp.fetch_status != "success" or not fetch_resp.visible_text:
+            collector.record(
+                tool_name="web.fetch_page",
+                input_summary=fetch_url,
+                outcome="error",
+                duration_ms=collector.elapsed_ms(t0),
+                http_status=fetch_resp.http_status,
+                error_message=fetch_resp.error_message or fetch_resp.fetch_status,
+            )
             log.info(
                 "Fetch non-success for %s: status=%s error=%s",
                 fetch_url, fetch_resp.fetch_status, fetch_resp.error_message,
             )
             summary.fetch_errors += 1
             detail = fetch_resp.error_message or fetch_resp.fetch_status
-            _p(f"{_fmt_elapsed(start)} â””â”€ âœ— {fetch_resp.fetch_status.upper()}  {detail}")
+            _p(f"{_fmt_elapsed(start)} \\- x {fetch_resp.fetch_status.upper()}  {detail}")
             _p(_running_totals(summary))
             continue
 
+        collector.record(
+            tool_name="web.fetch_page",
+            input_summary=fetch_url,
+            outcome="success",
+            duration_ms=collector.elapsed_ms(t0),
+            http_status=fetch_resp.http_status,
+        )
+
+        # ---- web.normalize_text ----
+        t0 = collector.start_timer()
         try:
             norm_resp = mcp_client.normalize_text(fetch_resp.visible_text)
+            collector.record(
+                tool_name="web.normalize_text",
+                input_summary=f"{len(fetch_resp.visible_text)} chars from {fetch_url}",
+                outcome="success",
+                duration_ms=collector.elapsed_ms(t0),
+            )
+            log.debug(
+                "web.normalize_text: url=%s hash=%s duration_ms=%d",
+                fetch_url,
+                (norm_resp.text_hash or "")[:8],
+                collector.elapsed_ms(t0),
+            )
         except Exception as exc:  # noqa: BLE001
+            collector.record(
+                tool_name="web.normalize_text",
+                input_summary=fetch_url,
+                outcome=classify_outcome(exc),
+                duration_ms=collector.elapsed_ms(t0),
+                error_message=str(exc),
+            )
             log.warning("Normalize error for %s: %s", fetch_url, exc)
             summary.fetch_errors += 1
-            _p(f"{_fmt_elapsed(start)} â””â”€ âœ— NORMALIZE ERROR  {exc}")
+            _p(f"{_fmt_elapsed(start)} \\- x NORMALIZE ERROR  {exc}")
             _p(_running_totals(summary))
             continue
 
+        # ---- db.store_source_document ----
+        t0 = collector.start_timer()
         try:
             store_result = api_client.store_source_document(
                 url=fetch_url,
@@ -303,22 +417,41 @@ def _execute_run(
                 error_message=fetch_resp.error_message,
                 search_run_id=summary.run_id,
             )
+            collector.record(
+                tool_name="db.store_source_document",
+                input_summary=fetch_url,
+                outcome="success",
+                duration_ms=collector.elapsed_ms(t0),
+            )
         except Exception as exc:  # noqa: BLE001
+            collector.record(
+                tool_name="db.store_source_document",
+                input_summary=fetch_url,
+                outcome=classify_outcome(exc),
+                duration_ms=collector.elapsed_ms(t0),
+                error_message=str(exc),
+            )
             log.warning("Store error for %s: %s", fetch_url, exc)
             summary.fetch_errors += 1
-            _p(f"{_fmt_elapsed(start)} â””â”€ âœ— STORE ERROR  {exc}")
+            _p(f"{_fmt_elapsed(start)} \\- x STORE ERROR  {exc}")
             _p(_running_totals(summary))
             continue
 
         if store_result.created:
             summary.source_docs_created += 1
             short_hash = (norm_resp.text_hash or "")[:8]
-            log.info("New source doc stored: id=%s url=%s", store_result.source_document_id, fetch_url)
-            _p(f"{_fmt_elapsed(start)} â””â”€ âœ“ NEW    hash:{short_hash}")
+            log.info(
+                "New source doc stored: id=%s hash=%s url=%s",
+                store_result.source_document_id, short_hash, fetch_url,
+            )
+            _p(f"{_fmt_elapsed(start)} \\- ok NEW    hash:{short_hash}")
         else:
             summary.source_docs_skipped += 1
-            log.info("Duplicate skipped: id=%s url=%s", store_result.source_document_id, fetch_url)
-            _p(f"{_fmt_elapsed(start)} â””â”€ â†© SKIP   already in database")
+            log.info(
+                "Duplicate skipped: id=%s url=%s",
+                store_result.source_document_id, fetch_url,
+            )
+            _p(f"{_fmt_elapsed(start)} \\- dup: SKIP   already in database")
 
         _p(_running_totals(summary))
 
@@ -326,6 +459,7 @@ def _execute_run(
         summary.final_status = "partial"
     else:
         summary.final_status = "completed"
+
 
 
 def _running_totals(summary: RunSummary) -> str:
@@ -336,4 +470,3 @@ def _running_totals(summary: RunSummary) -> str:
         f"skipped: {summary.source_docs_skipped}  "
         f"errors: {summary.fetch_errors}"
     )
-

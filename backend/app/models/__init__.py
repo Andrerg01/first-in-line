@@ -10,6 +10,7 @@ from app.models.locations import Location  # noqa: F401
 from app.models.processing import ProcessingDecision  # noqa: F401
 from app.models.search import SearchResult, SearchRun  # noqa: F401
 from app.models.sources import EventSource, SourceDocument  # noqa: F401
+from app.models.telemetry import PipelineToolCall  # noqa: F401
 
 __all__ = [
     "Location",
@@ -20,4 +21,5 @@ __all__ = [
     "EventSource",
     "EventClaim",
     "ProcessingDecision",
+    "PipelineToolCall",
 ]

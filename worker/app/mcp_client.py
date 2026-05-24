@@ -1,4 +1,27 @@
-"""MCP client — thin HTTP wrapper for calling MCP server tools from the worker."""
+"""MCP client — thin HTTP wrapper for calling MCP server tools from the worker.
+
+Rate-limit handling
+-------------------
+DuckDuckGo applies IP-level rate limits to container environments.  When the
+search provider is rate-limited, DDGS hangs until the HTTP timeout fires
+rather than returning an immediate error code.
+
+Detection:
+  If a ``web.search`` call fails with ``RuntimeError`` (all retries exhausted)
+  and the underlying cause is ``httpx.TimeoutException``, the client emits a
+  prominent WARNING recommending the operator wait 30–60 minutes:
+
+    WARNING  Rate limit likely active for DuckDuckGo.
+             All search retries timed out.  Wait 30–60 minutes before
+             the next run, or set SEARCH_PROVIDER=stub for testing.
+
+Mitigation (current defaults):
+  - ``_SEARCH_TIMEOUT = 8 s`` — DDGS call timeout in the MCP server.
+  - MCP client uses ``timeout=12 s`` + ``max_retries=1`` for search so each
+    query fails in at most ~12 s instead of 3 × 30 s = 90 s.
+  - ``QUERY_INTERVAL_SECONDS = 2 s`` (default) adds a mandatory pause between
+    consecutive queries so normal traffic doesn't trigger the limit.
+"""
 
 from __future__ import annotations
 
@@ -131,23 +154,48 @@ def _post_with_retry(
 def search(query: str, max_results: int | None = None) -> SearchResponse:
     """Call web.search and return ranked URL results.
 
+    When all retry attempts fail with a ``TimeoutException`` the function
+    raises a ``RuntimeError`` (as normal) **and** emits a WARNING that the
+    DuckDuckGo rate limit is likely active.
+
     Args:
         query: Search query string.
         max_results: Override max results (uses settings default if None).
 
     Returns:
         A ``SearchResponse`` with ranked result items.
+
+    Raises:
+        RuntimeError: If the MCP server cannot be reached or all retries fail.
     """
     n = max_results if max_results is not None else settings.max_results_per_query
-    data = _post_with_retry(
-        "/tools/web.search",
-        {"query": query, "max_results": n},
-        label="web.search",
-        # Search uses a tighter timeout and fewer retries: DuckDuckGo rate-limits
-        # don't clear within seconds, so retrying immediately wastes time.
-        timeout=12.0,
-        max_retries=1,
-    )
+    try:
+        data = _post_with_retry(
+            "/tools/web.search",
+            {"query": query, "max_results": n},
+            label="web.search",
+            # Search uses a tighter timeout and fewer retries: DuckDuckGo
+            # rate limits don't clear within seconds, so retrying immediately
+            # only multiplies the wait.  The MCP server's _SEARCH_TIMEOUT is
+            # 8 s; we allow 12 s so the server can return a 500 before the
+            # client fires its own timeout.
+            timeout=12.0,
+            max_retries=1,
+        )
+    except RuntimeError as exc:
+        # Detect rate-limit pattern: all retries failed with timeouts.
+        cause = exc.__cause__
+        if isinstance(cause, httpx.TimeoutException) or (
+            cause is None and "timed out" in str(exc).lower()
+        ):
+            log.warning(
+                "RATE LIMIT LIKELY — all web.search retries timed out for query %r. "
+                "DuckDuckGo is probably rate-limiting this container IP. "
+                "Wait 30–60 minutes before the next run, or set "
+                "SEARCH_PROVIDER=stub in the MCP server environment for testing.",
+                query,
+            )
+        raise
     return SearchResponse(
         query=data["query"],
         provider=data["provider"],
