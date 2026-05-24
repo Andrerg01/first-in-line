@@ -88,6 +88,22 @@ def get_logger(
     return RunLoggerAdapter(base, {"run_id": short_id})
 
 
+class _RunIdFormatter(logging.Formatter):
+    """Formatter that guarantees ``run_id`` is always present in the log record.
+
+    Any log record emitted by code that does not go through ``RunLoggerAdapter``
+    (e.g. the ``httpx`` retry warnings in ``mcp_client``) will be missing the
+    ``run_id`` field.  Without this guard the format string ``%(run_id)8s``
+    raises a ``ValueError`` and Python's logging machinery prints a noisy
+    "Logging error ---" traceback to stderr.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        if not hasattr(record, "run_id"):
+            record.run_id = "--------"  # type: ignore[attr-defined]
+        return super().format(record)
+
+
 def configure_logging(level: str | None = None) -> None:
     """Configure root logging for the worker process.
 
@@ -113,7 +129,7 @@ def configure_logging(level: str | None = None) -> None:
     if not any(type(h) is logging.StreamHandler for h in root.handlers):
         handler = logging.StreamHandler()
         handler.setFormatter(
-            logging.Formatter(fmt=_DEFAULT_FORMAT, datefmt=_DATE_FORMAT)
+            _RunIdFormatter(fmt=_DEFAULT_FORMAT, datefmt=_DATE_FORMAT)
         )
         root.addHandler(handler)
 

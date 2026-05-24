@@ -360,8 +360,8 @@ def _execute_run(
                 fetch_url, fetch_resp.fetch_status, fetch_resp.error_message,
             )
             summary.fetch_errors += 1
-            detail = fetch_resp.error_message or fetch_resp.fetch_status
-            _p(f"{_fmt_elapsed(start)} \\- x {fetch_resp.fetch_status.upper()}  {detail}")
+            detail = fetch_resp.error_message or "no visible text extracted"
+            _p(f"{_fmt_elapsed(start)} \\- x SKIP  {detail}")
             _p(_running_totals(summary))
             continue
 

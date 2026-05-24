@@ -469,8 +469,18 @@ def _search_duckduckgo(query: str, max_results: int) -> list[SearchResultItem]:
     Returns:
         A list of ``SearchResultItem`` ranked by position.
     """
-    with DDGS(timeout=_SEARCH_TIMEOUT) as ddgs:
-        raw = ddgs.text(query, max_results=max_results)
+    try:
+        with DDGS(timeout=_SEARCH_TIMEOUT) as ddgs:
+            raw = ddgs.text(query, max_results=max_results)
+    except Exception as exc:  # noqa: BLE001
+        # Rate-limits and transient errors should degrade gracefully so the
+        # pipeline can mark the query as failed without a 500 response.
+        msg = str(exc)
+        if "202" in msg or "ratelimit" in msg.lower():
+            log.warning("DuckDuckGo RATE LIMIT for query %r: %s", query, exc)
+        else:
+            log.warning("DuckDuckGo search error for query %r: %s", query, exc)
+        return []
     return [
         SearchResultItem(
             rank=i + 1,
