@@ -48,8 +48,12 @@ def get_source_document_by_id(
     return db.get(SourceDocument, source_id)
 
 
-def find_source_by_hash(db: Session, text_hash: str) -> SourceDocument | None:
+def find_source_by_hash(db: Session, text_hash: str | None) -> SourceDocument | None:
     """Look up a source document by its visible-text hash for deduplication.
+
+    Returns ``None`` immediately when ``text_hash`` is ``None`` or empty,
+    because SQL ``WHERE col = NULL`` is always false and the explicit guard
+    makes the intent clear.
 
     Args:
         db: Active database session.
@@ -58,7 +62,29 @@ def find_source_by_hash(db: Session, text_hash: str) -> SourceDocument | None:
     Returns:
         The matching ``SourceDocument`` or ``None``.
     """
+    if not text_hash:
+        return None
     stmt = select(SourceDocument).where(SourceDocument.visible_text_hash == text_hash)
+    return db.scalars(stmt).first()
+
+
+def get_event_source_for_source_document(
+    db: Session, source_document_id: uuid.UUID
+) -> EventSource | None:
+    """Return the first EventSource linking this source document to an event.
+
+    Args:
+        db: Active database session.
+        source_document_id: UUID of the source document.
+
+    Returns:
+        The matching ``EventSource`` or ``None`` if none exists.
+    """
+    stmt = (
+        select(EventSource)
+        .where(EventSource.source_document_id == source_document_id)
+        .limit(1)
+    )
     return db.scalars(stmt).first()
 
 

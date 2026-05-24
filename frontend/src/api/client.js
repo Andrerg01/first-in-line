@@ -66,3 +66,16 @@ export function patchEventStatus(id, status) {
     body: JSON.stringify({ status }),
   });
 }
+
+/**
+ * Submit a URL for manual ingestion and candidate event extraction.
+ * @param {string} url - The URL to ingest
+ * @returns {Promise<Object>} Ingest result
+ */
+export function ingestUrl(url) {
+  return request("/api/ingest/manual-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+}

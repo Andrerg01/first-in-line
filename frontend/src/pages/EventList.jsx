@@ -86,8 +86,11 @@ export default function EventList() {
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-        <h1 style={styles.title}>Grand Opening Radar</h1>
-        <p style={styles.subtitle}>Upcoming grand openings in Greenville, SC and beyond</p>
+        <div>
+          <h1 style={styles.title}>Grand Opening Radar</h1>
+          <p style={styles.subtitle}>Upcoming grand openings in Greenville, SC and beyond</p>
+        </div>
+        <Link to="/admin/ingest" style={styles.ingestLink}>+ Ingest URL</Link>
       </header>
 
       {/* Filters */}
@@ -175,9 +178,26 @@ const styles = {
     marginBottom: "28px",
     borderBottom: "2px solid #e0e0e0",
     paddingBottom: "16px",
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 16,
+    flexWrap: "wrap",
   },
   title: { margin: 0, fontSize: "2rem", fontWeight: 700 },
   subtitle: { margin: "6px 0 0", color: "#666", fontSize: "1rem" },
+  ingestLink: {
+    display: "inline-block",
+    padding: "8px 16px",
+    background: "#0d6efd",
+    color: "#fff",
+    borderRadius: 6,
+    textDecoration: "none",
+    fontSize: 14,
+    fontWeight: 600,
+    whiteSpace: "nowrap",
+    alignSelf: "center",
+  },
   filterBar: {
     display: "flex",
     alignItems: "flex-end",

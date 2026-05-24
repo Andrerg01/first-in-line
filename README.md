@@ -9,7 +9,8 @@ Grand Opening Radar discovers nearby business grand openings and preserves sourc
 | 0 | Monorepo skeleton, Docker Compose, service stubs | ✅ Complete |
 | 1 | Database schema, Alembic migrations, CRUD backend, seed data | ✅ Complete |
 | 2 | Basic frontend — event list, event detail, admin verify/reject | ✅ Complete |
-| 3+ | Manual URL ingestion, LangGraph pipeline, map/calendar, CI/CD | Planned |
+| 3 | Manual URL ingestion — AdminIngest page, OpenAI extraction pipeline | ✅ Complete |
+| 4+ | Scheduled search, LangGraph pipeline, map/calendar, CI/CD, notifications | Planned |
 
 Current version: see `VERSION` file.
 
@@ -25,7 +26,7 @@ Current version: see `VERSION` file.
 
 ```bash
 cp .env.example .env
-# Edit .env — set POSTGRES_PASSWORD at minimum.
+# Edit .env — set POSTGRES_PASSWORD and OPENAI_API_KEY at minimum.
 # DATABASE_URL must use the postgresql+psycopg:// scheme (psycopg v3).
 ```
 
@@ -46,6 +47,9 @@ Services:
 | API docs (Swagger) | http://localhost:8000/docs |
 | MCP server | http://localhost:9000 |
 | Postgres | localhost:5432 |
+
+> **OPENAI_API_KEY** must be set in `.env` for the manual URL ingestion pipeline
+> (`/admin/ingest`) to call OpenAI for event extraction.
 
 ### 3. Apply migrations and seed data
 
@@ -69,11 +73,21 @@ Run from the `backend/` directory (alembic.ini lives there).
 
 ```bash
 # Unit + integration (no Docker required — uses SQLite in-memory)
+# 73 tests as of Phase 3
 python -m pytest tests/unit/ tests/integration/ -v
 
 # E2E smoke (requires docker compose up -d)
 python -m pytest tests/e2e/ -v
 ```
+
+## Pages
+
+| Route | Description |
+|-------|-------------|
+| `/` | Event list with filters |
+| `/events/:id` | Event detail with sources and claims |
+| `/admin/ingest` | Paste a URL to trigger manual ingestion |
+| `/admin/events/:id` | Verify / reject a candidate event |
 
 ## Architecture
 

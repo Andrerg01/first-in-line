@@ -1,0 +1,538 @@
+"""Unit tests for the ingest service layer.
+
+All MCP HTTP calls and OpenAI calls are monkeypatched so these tests
+run without any network access or live services.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from unittest.mock import MagicMock
+
+import httpx
+import pytest
+
+from app.models.events import Event
+from app.models.processing import ProcessingDecision
+from app.models.sources import EventSource, SourceDocument
+from app.schemas.ingest import LLMClaim, LLMExtractionResult, ManualIngestResponse
+from app.services import ingest_service
+from app.exceptions import ConfigurationError, ExtractionError, MCPError
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+_FETCH_OK = {
+    "url": "https://example.com/opening",
+    "canonical_url": "https://example.com/opening",
+    "domain": "example.com",
+    "title": "Big Cafe Grand Opening",
+    "visible_text": "Big Cafe is opening at 123 Main St, Greenville SC on June 1!",
+    "http_status": 200,
+    "content_type": "text/html",
+    "fetch_status": "success",
+    "error_message": None,
+}
+
+_NORM_OK = {
+    "normalized_text": "Big Cafe is opening at 123 Main St, Greenville SC on June 1!",
+    "text_hash": "abc123hash",
+}
+
+_EXTRACTION_RELEVANT = LLMExtractionResult(
+    is_relevant=True,
+    business_name="Big Cafe",
+    event_name="Grand Opening",
+    event_type="grand_opening",
+    category="cafe",
+    event_date_str="2024-06-01",
+    address="123 Main St",
+    city="Greenville",
+    state="SC",
+    promotion_text="Join us!",
+    confidence_score=0.92,
+    claims=[
+        LLMClaim(
+            claim_type="business_name",
+            claim_value="Big Cafe",
+            claim_text="Big Cafe is opening",
+        )
+    ],
+)
+
+_EXTRACTION_NOT_RELEVANT = LLMExtractionResult(
+    is_relevant=False,
+    confidence_score=0.1,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _patch_mcp_and_llm(monkeypatch, fetch=None, norm=None, extraction=None):
+    """Patch the three external calls used by ingest_manual_url."""
+    monkeypatch.setattr(
+        ingest_service, "_call_mcp_fetch_page", lambda url: fetch or _FETCH_OK
+    )
+    monkeypatch.setattr(
+        ingest_service, "_call_mcp_normalize_text", lambda text: norm or _NORM_OK
+    )
+    monkeypatch.setattr(
+        ingest_service,
+        "_extract_event_data",
+        lambda url, text: extraction or _EXTRACTION_RELEVANT,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests — happy path (relevant event created)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestManualUrlRelevant:
+    def test_returns_ingest_response(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        assert isinstance(resp, ManualIngestResponse)
+
+    def test_relevant_flag_true(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        assert resp.relevant is True
+
+    def test_duplicate_flag_false_on_first_run(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        assert resp.duplicate is False
+
+    def test_event_id_present(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        assert resp.event_id is not None
+
+    def test_event_fields_populated(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        assert resp.business_name == "Big Cafe"
+        assert resp.category == "cafe"
+        assert resp.city == "Greenville"
+        assert resp.state == "SC"
+        assert resp.status == "candidate"
+
+    def test_claims_count(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        assert resp.claims_count == 1
+
+    def test_event_persisted_to_db(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        event = db_session.get(Event, resp.event_id)
+        assert event is not None
+        assert event.business_name == "Big Cafe"
+        assert event.status == "candidate"
+
+    def test_source_document_persisted(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        doc = db_session.get(SourceDocument, resp.source_id)
+        assert doc is not None
+        assert doc.visible_text_hash == "abc123hash"
+
+    def test_processing_decision_created(self, db_session, monkeypatch):
+        from sqlalchemy import select
+
+        _patch_mcp_and_llm(monkeypatch)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        decision = db_session.scalars(
+            select(ProcessingDecision).where(
+                ProcessingDecision.source_document_id == resp.source_id
+            )
+        ).first()
+        assert decision is not None
+        assert decision.decision_type == "manual_ingest"
+        assert decision.decision_value == "candidate_created"
+
+
+# ---------------------------------------------------------------------------
+# Tests — not relevant (event not created)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestManualUrlNotRelevant:
+    def test_relevant_flag_false(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch, extraction=_EXTRACTION_NOT_RELEVANT)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/other")
+        assert resp.relevant is False
+
+    def test_event_id_none_when_not_relevant(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch, extraction=_EXTRACTION_NOT_RELEVANT)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/other")
+        assert resp.event_id is None
+
+    def test_source_document_still_created(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch, extraction=_EXTRACTION_NOT_RELEVANT)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/other")
+        doc = db_session.get(SourceDocument, resp.source_id)
+        assert doc is not None
+
+    def test_processing_decision_not_relevant(self, db_session, monkeypatch):
+        from sqlalchemy import select
+
+        _patch_mcp_and_llm(monkeypatch, extraction=_EXTRACTION_NOT_RELEVANT)
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/other")
+        decision = db_session.scalars(
+            select(ProcessingDecision).where(
+                ProcessingDecision.source_document_id == resp.source_id
+            )
+        ).first()
+        assert decision is not None
+        assert decision.decision_value == "not_relevant"
+
+
+# ---------------------------------------------------------------------------
+# Tests — duplicate detection
+# ---------------------------------------------------------------------------
+
+
+class TestIngestManualUrlDuplicate:
+    def test_duplicate_returns_early(self, db_session, monkeypatch):
+        """Second call with same hash returns duplicate=True without creating a new event."""
+        _patch_mcp_and_llm(monkeypatch)
+        resp1 = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        assert resp1.duplicate is False
+
+        # Second call with same hash should deduplicate
+        resp2 = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        assert resp2.duplicate is True
+        assert resp2.fetch_status == "skipped"
+        assert resp2.source_id == resp1.source_id
+
+    def test_duplicate_points_to_existing_event(self, db_session, monkeypatch):
+        _patch_mcp_and_llm(monkeypatch)
+        resp1 = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        resp2 = ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+        assert resp2.event_id == resp1.event_id
+
+
+# ---------------------------------------------------------------------------
+# Tests — date parsing helper
+# ---------------------------------------------------------------------------
+
+
+class TestParseEventDate:
+    def test_valid_date(self):
+        result = ingest_service._parse_event_date("2024-06-01")
+        assert result == datetime(2024, 6, 1, tzinfo=timezone.utc)
+
+    def test_none_returns_none(self):
+        assert ingest_service._parse_event_date(None) is None
+
+    def test_invalid_string_returns_none(self):
+        assert ingest_service._parse_event_date("not-a-date") is None
+
+
+# ---------------------------------------------------------------------------
+# Tests — failed fetch path (HIGH-3)
+# ---------------------------------------------------------------------------
+
+
+_FETCH_FAILED = {
+    "url": "https://example.com/broken",
+    "canonical_url": None,
+    "domain": "example.com",
+    "title": None,
+    "visible_text": "",
+    "http_status": None,
+    "content_type": None,
+    "fetch_status": "failed",
+    "error_message": "Timeout",
+}
+
+
+class TestIngestManualUrlFetchFailed:
+    def test_relevant_false_on_failed_fetch(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_FAILED
+        )
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/broken")
+        assert resp.relevant is False
+
+    def test_duplicate_false_on_failed_fetch(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_FAILED
+        )
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/broken")
+        assert resp.duplicate is False
+
+    def test_fetch_status_propagated(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_FAILED
+        )
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/broken")
+        assert resp.fetch_status == "failed"
+
+    def test_source_document_persisted_with_null_hash(self, db_session, monkeypatch):
+        """Failed fetches must NOT write a hash — prevents empty-string hash collisions."""
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_FAILED
+        )
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/broken")
+        doc = db_session.get(SourceDocument, resp.source_id)
+        assert doc is not None
+        assert doc.visible_text_hash is None
+
+    def test_no_event_created_on_failed_fetch(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_FAILED
+        )
+        resp = ingest_service.ingest_manual_url(db_session, "https://example.com/broken")
+        assert resp.event_id is None
+
+    def test_two_failed_fetches_do_not_collide(self, db_session, monkeypatch):
+        """Two different URLs that fail should each create their own source document."""
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: {**_FETCH_FAILED, "url": url}
+        )
+        resp1 = ingest_service.ingest_manual_url(db_session, "https://a.com/")
+        resp2 = ingest_service.ingest_manual_url(db_session, "https://b.com/")
+        assert resp1.source_id != resp2.source_id
+
+
+# ---------------------------------------------------------------------------
+# Tests — configuration / OpenAI error paths (HIGH-4)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestManualUrlOpenAIErrors:
+    def test_missing_api_key_raises_configuration_error(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_OK
+        )
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_normalize_text", lambda text: _NORM_OK
+        )
+        monkeypatch.setattr(ingest_service.settings, "openai_api_key", "")
+        with pytest.raises(ConfigurationError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+    def test_openai_exception_raises_extraction_error(self, db_session, monkeypatch):
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_OK
+        )
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_normalize_text", lambda text: _NORM_OK
+        )
+
+        def _boom(url: str, text: str):
+            raise ExtractionError("Event extraction service is unavailable.")
+
+        monkeypatch.setattr(ingest_service, "_extract_event_data", _boom)
+        with pytest.raises(ExtractionError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+    def test_source_document_survives_extraction_error(self, db_session, monkeypatch):
+        """Source document must be committed before OpenAI is called (CRITICAL-1).
+
+        If extraction fails, the source doc must already exist in the DB so
+        that the pipeline is auditable and the same URL won't re-bill OpenAI.
+        """
+        from sqlalchemy import select
+
+        committed: list[bool] = []
+
+        original_commit = db_session.commit
+
+        def _tracking_commit():
+            original_commit()
+            committed.append(True)
+
+        monkeypatch.setattr(db_session, "commit", _tracking_commit)
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_OK
+        )
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_normalize_text", lambda text: _NORM_OK
+        )
+        monkeypatch.setattr(ingest_service.settings, "openai_api_key", "key")
+
+        def _boom(url: str, text: str):
+            raise ExtractionError("boom")
+
+        monkeypatch.setattr(ingest_service, "_extract_event_data", _boom)
+
+        with pytest.raises(ExtractionError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+        # At least one commit must have occurred before the exception.
+        assert committed, "Source document commit must happen before calling OpenAI"
+        # Source document should now be in the DB.
+        doc = db_session.scalars(
+            select(SourceDocument).where(SourceDocument.url == "https://example.com/opening")
+        ).first()
+        assert doc is not None, "Source document must survive an ExtractionError"
+
+
+# ---------------------------------------------------------------------------
+# Tests — MCPError raised (service-down paths) (HIGH-3)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestManualUrlMCPErrors:
+    def test_fetch_page_mcp_down_raises_mcp_error(self, db_session, monkeypatch):
+        """_call_mcp_fetch_page raising MCPError must propagate out of ingest_manual_url."""
+        def _down(url: str):
+            raise MCPError("Page fetch service is unavailable.")
+
+        monkeypatch.setattr(ingest_service, "_call_mcp_fetch_page", _down)
+        with pytest.raises(MCPError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+    def test_normalize_text_mcp_down_raises_mcp_error(self, db_session, monkeypatch):
+        """_call_mcp_normalize_text raising MCPError must propagate out of ingest_manual_url."""
+        def _down(text: str):
+            raise MCPError("Text processing service is unavailable.")
+
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_OK
+        )
+        monkeypatch.setattr(ingest_service, "_call_mcp_normalize_text", _down)
+        with pytest.raises(MCPError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+    def test_normalize_text_bad_payload_raises_mcp_error(self, db_session, monkeypatch):
+        """Unexpected MCP normalize response (missing keys) must raise MCPError."""
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_OK
+        )
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_normalize_text", lambda text: {"error": "oops"}
+        )
+        with pytest.raises(MCPError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+
+# ---------------------------------------------------------------------------
+# Tests — duplicate of a not-relevant first ingestion (MEDIUM-4)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestManualUrlDuplicateNotRelevant:
+    def test_duplicate_of_not_relevant_returns_duplicate_true_no_event(
+        self, db_session, monkeypatch
+    ):
+        """Re-submitting a URL whose first ingestion was not-relevant must return
+        duplicate=True and event_id=None."""
+        _patch_mcp_and_llm(monkeypatch, extraction=_EXTRACTION_NOT_RELEVANT)
+        resp1 = ingest_service.ingest_manual_url(db_session, "https://example.com/irrelevant")
+        assert resp1.relevant is False
+        assert resp1.event_id is None
+
+        # Second submission of same URL/hash
+        resp2 = ingest_service.ingest_manual_url(db_session, "https://example.com/irrelevant")
+        assert resp2.duplicate is True
+        assert resp2.event_id is None
+        assert resp2.source_id == resp1.source_id
+
+
+# ---------------------------------------------------------------------------
+# Tests — retry behavior of _http_call_with_retry helper
+# ---------------------------------------------------------------------------
+
+
+class TestHttpCallWithRetry:
+    """Verify that the retry helper retries on transient errors and gives up
+    after _MAX_RETRIES attempts."""
+
+    def test_succeeds_on_second_attempt(self, monkeypatch):
+        """A single transient failure followed by success should return the response."""
+        call_count = 0
+
+        def mock_post(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise httpx.ConnectError("Connection refused")
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = lambda: None
+            return mock_resp
+
+        monkeypatch.setattr(httpx, "post", mock_post)
+        monkeypatch.setattr(ingest_service.time, "sleep", lambda s: None)
+
+        result = ingest_service._http_call_with_retry(
+            lambda: httpx.post("http://mcp/tools/web.fetch_page", json={}),
+            label="test",
+        )
+        assert result is not None
+        assert call_count == 2
+
+    def test_raises_after_all_retries_exhausted(self, monkeypatch):
+        """All attempts failing must raise the last transport exception."""
+        def always_fail(*args, **kwargs):
+            raise httpx.ConnectError("refused")
+
+        monkeypatch.setattr(httpx, "post", always_fail)
+        monkeypatch.setattr(ingest_service.time, "sleep", lambda s: None)
+
+        with pytest.raises(httpx.ConnectError):
+            ingest_service._http_call_with_retry(
+                lambda: httpx.post("http://mcp/tools/test", json={}),
+                label="test",
+                max_retries=3,
+            )
+
+    def test_does_not_retry_on_4xx(self, monkeypatch):
+        """HTTP 4xx responses must not be retried (deterministic client errors)."""
+        call_count = 0
+
+        def bad_request(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            mock_resp = MagicMock()
+            mock_resp.status_code = 400
+            mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+                "400", request=MagicMock(), response=mock_resp
+            )
+            return mock_resp
+
+        monkeypatch.setattr(httpx, "post", bad_request)
+        monkeypatch.setattr(ingest_service.time, "sleep", lambda s: None)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            ingest_service._http_call_with_retry(
+                lambda: httpx.post("http://mcp/tools/test", json={}),
+                label="test",
+                max_retries=3,
+            )
+        assert call_count == 1  # no retry on 4xx
+
+    def test_retries_on_5xx(self, monkeypatch):
+        """HTTP 5xx responses should be retried."""
+        call_count = 0
+
+        def server_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            mock_resp = MagicMock()
+            mock_resp.status_code = 503
+            mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+                "503", request=MagicMock(), response=mock_resp
+            )
+            return mock_resp
+
+        monkeypatch.setattr(httpx, "post", server_error)
+        monkeypatch.setattr(ingest_service.time, "sleep", lambda s: None)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            ingest_service._http_call_with_retry(
+                lambda: httpx.post("http://mcp/tools/test", json={}),
+                label="test",
+                max_retries=3,
+            )
+        assert call_count == 3  # all 3 attempts made

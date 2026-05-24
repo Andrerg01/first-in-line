@@ -31,6 +31,9 @@ def test_client():
         db: Session = TestingSession()
         try:
             yield db
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 
