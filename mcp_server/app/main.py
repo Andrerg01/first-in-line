@@ -51,7 +51,7 @@ _PLANNED_TOOLS = [
 # Search configuration
 _SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "duckduckgo")  # duckduckgo | stub
 _MAX_SEARCH_RESULTS = 10
-_SEARCH_TIMEOUT = 20.0  # seconds for DDGS calls
+_SEARCH_TIMEOUT = 8.0   # seconds for DDGS calls; kept short so rate-limit hangs fail fast
 
 _FETCH_TIMEOUT = 15.0  # seconds
 _MAX_TEXT_BYTES = 500_000  # guard against huge pages
@@ -469,21 +469,17 @@ def _search_duckduckgo(query: str, max_results: int) -> list[SearchResultItem]:
     Returns:
         A list of ``SearchResultItem`` ranked by position.
     """
-    try:
-        with DDGS(timeout=_SEARCH_TIMEOUT) as ddgs:
-            raw = ddgs.text(query, max_results=max_results)
-        return [
-            SearchResultItem(
-                rank=i + 1,
-                title=r.get("title"),
-                url=r["href"],
-                snippet=r.get("body"),
-            )
-            for i, r in enumerate(raw or [])
-        ]
-    except Exception as exc:  # noqa: BLE001
-        log.warning("DuckDuckGo search failed for %r: %s", query, exc)
-        return []
+    with DDGS(timeout=_SEARCH_TIMEOUT) as ddgs:
+        raw = ddgs.text(query, max_results=max_results)
+    return [
+        SearchResultItem(
+            rank=i + 1,
+            title=r.get("title"),
+            url=r["href"],
+            snippet=r.get("body"),
+        )
+        for i, r in enumerate(raw or [])
+    ]
 
 
 def _search_stub(query: str, max_results: int) -> list[SearchResultItem]:  # noqa: ARG001

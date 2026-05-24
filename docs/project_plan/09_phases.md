@@ -486,7 +486,62 @@ System does not send duplicate alerts
 
 ---
 
-## Phase 11 — Polish and Portfolio Packaging
+## Phase 11 — Admin Authentication
+
+## Goal
+
+Secure the admin-only surfaces (review queue, status changes) behind a real
+identity so the app can be exposed publicly without open write access.
+
+## Design Decisions
+
+* **Login with Google (OAuth 2.0 / OIDC)** — no password management; users
+  authenticate via their Google account and the system verifies the returned
+  identity token.
+* **Admin allowlist** — a small, env-var or DB-backed list of Google email
+  addresses that are granted admin access. No self-registration; the operator
+  controls membership directly.
+* **No general user registration** — keep it minimal. Admins log in; everyone
+  else is read-only.
+
+## Deliverables
+
+* Google OAuth 2.0 integration on the backend (authorization code flow).
+* JWT session tokens issued by the backend after successful Google callback.
+* Admin allowlist (start with `ADMIN_EMAILS` env var; migrate to DB table
+  later if the list grows).
+* Route guards on the frontend for `/admin/*` pages.
+* Protected backend endpoints: verify, reject, review-queue write actions.
+* Logout endpoint and frontend logout button.
+
+## Suggested Tasks
+
+```text
+Register OAuth app in Google Cloud Console
+Create GET /auth/google/login (redirect to Google)
+Create GET /auth/google/callback (exchange code, issue JWT)
+Create POST /auth/logout
+Add JWT middleware to admin-only endpoints
+Add ADMIN_EMAILS env var to backend config
+Add LoginPage frontend page
+Add useAuth() context / hook
+Protect /admin/* routes with auth redirect
+Add logout button to admin nav
+```
+
+## Exit Criteria
+
+```text
+Unauthenticated users cannot call verify/reject/review-queue write endpoints
+Admin navigates to /admin/review and is redirected to Google if not logged in
+After Google sign-in, admin lands back on the review queue
+Non-allowlisted Google accounts receive 403
+Admin can log out and session is invalidated
+```
+
+---
+
+## Phase 12 — Polish and Portfolio Packaging
 
 ## Goal
 

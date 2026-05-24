@@ -143,6 +143,10 @@ def search(query: str, max_results: int | None = None) -> SearchResponse:
         "/tools/web.search",
         {"query": query, "max_results": n},
         label="web.search",
+        # Search uses a tighter timeout and fewer retries: DuckDuckGo rate-limits
+        # don't clear within seconds, so retrying immediately wastes time.
+        timeout=12.0,
+        max_retries=1,
     )
     return SearchResponse(
         query=data["query"],

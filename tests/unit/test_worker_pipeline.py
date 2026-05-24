@@ -236,3 +236,11 @@ class _SummaryStub:
     def __init__(self, final_status: str) -> None:
         self.run_id = uuid.uuid4()
         self.final_status = final_status
+        self.queries_executed = 0
+        self.search_results_found = 0
+        self.urls_attempted = 0
+        self.source_docs_created = 0
+        self.source_docs_skipped = 0
+        self.fetch_errors = 0
+        self.elapsed_seconds = 0.0
+        self.notes = ""

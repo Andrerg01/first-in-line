@@ -67,6 +67,7 @@ services:
       MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp-server:9000}
       BACKEND_API_URL: ${BACKEND_API_URL:-http://backend-api:8000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONPATH: /workspace
     depends_on:
       postgres:
         condition: service_healthy
