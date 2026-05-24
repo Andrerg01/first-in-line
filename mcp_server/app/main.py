@@ -18,6 +18,7 @@ import ipaddress
 import logging
 import re
 import socket
+import time
 from urllib.parse import urlparse
 
 import httpx
@@ -47,6 +48,17 @@ _PLANNED_TOOLS = [
 
 _FETCH_TIMEOUT = 15.0  # seconds
 _MAX_TEXT_BYTES = 500_000  # guard against huge pages
+_MAX_FETCH_RETRIES = 3  # total attempts per URL fetch
+_FETCH_BACKOFF_BASE = 1.0  # seconds; wait = _FETCH_BACKOFF_BASE * 2**attempt
+
+# HTTP status codes that indicate a transient server error worth retrying.
+_RETRYABLE_TARGET_STATUSES = frozenset({429, 500, 502, 503, 504})
+_RETRYABLE_FETCH_ERRORS = (
+    httpx.ConnectError,
+    httpx.TimeoutException,
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+)
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -203,6 +215,65 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _fetch_url_with_retry(
+    url: str,
+    headers: dict,
+    max_retries: int = _MAX_FETCH_RETRIES,
+    backoff_base: float = _FETCH_BACKOFF_BASE,
+) -> httpx.Response:
+    """Fetch a URL with exponential backoff on transient errors.
+
+    Retries on connection/timeout errors and HTTP 429/5xx responses.
+    Does not retry HTTP 4xx (deterministic client errors).
+
+    Args:
+        url: Target URL to GET.
+        headers: Request headers to include.
+        max_retries: Total number of attempts.
+        backoff_base: Base seconds for exponential backoff.
+
+    Returns:
+        The ``httpx.Response`` from the last successful (or final) attempt.
+
+    Raises:
+        httpx.HTTPError: If all attempts fail due to a transport error.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            with httpx.Client(
+                timeout=_FETCH_TIMEOUT, follow_redirects=True
+            ) as client:
+                resp = client.get(url, headers=headers)
+
+            if resp.status_code in _RETRYABLE_TARGET_STATUSES and attempt < max_retries - 1:
+                wait = backoff_base * (2 ** attempt)
+                log.warning(
+                    "fetch %s got HTTP %d, retrying in %.1fs (attempt %d/%d)",
+                    url, resp.status_code, wait, attempt + 1, max_retries,
+                )
+                time.sleep(wait)
+                continue
+
+            return resp  # success, or final attempt with a retryable status
+
+        except _RETRYABLE_FETCH_ERRORS as exc:
+            last_exc = exc
+            if attempt < max_retries - 1:
+                wait = backoff_base * (2 ** attempt)
+                log.warning(
+                    "fetch %s error, retrying in %.1fs (attempt %d/%d): %s",
+                    url, wait, attempt + 1, max_retries, exc,
+                )
+                time.sleep(wait)
+            else:
+                log.warning(
+                    "fetch %s failed after %d attempts: %s", url, max_retries, exc
+                )
+
+    raise last_exc  # type: ignore[misc]
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -224,8 +295,9 @@ def tools() -> dict[str, list[str]]:
 def fetch_page(body: FetchPageRequest) -> FetchPageResponse:
     """Fetch a URL and extract its visible text.
 
-    Performs a single GET request with a sensible timeout and content-type
-    check.  Only text/html responses are parsed; others are rejected.
+    Performs up to ``_MAX_FETCH_RETRIES`` GET requests with exponential
+    backoff on transient errors. Only text/html responses are parsed; others
+    are rejected.
 
     Args:
         body: Request containing the URL to fetch.
@@ -259,8 +331,7 @@ def fetch_page(body: FetchPageRequest) -> FetchPageResponse:
     }
 
     try:
-        with httpx.Client(timeout=_FETCH_TIMEOUT, follow_redirects=True) as client:
-            resp = client.get(body.url, headers=headers)
+        resp = _fetch_url_with_retry(body.url, headers=headers)
     except httpx.TimeoutException as exc:
         log.warning("Fetch timeout for %s: %s", body.url, exc)
         return FetchPageResponse(

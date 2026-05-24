@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 
 from app.models.events import Event
@@ -437,3 +438,101 @@ class TestIngestManualUrlDuplicateNotRelevant:
         assert resp2.duplicate is True
         assert resp2.event_id is None
         assert resp2.source_id == resp1.source_id
+
+
+# ---------------------------------------------------------------------------
+# Tests — retry behavior of _http_call_with_retry helper
+# ---------------------------------------------------------------------------
+
+
+class TestHttpCallWithRetry:
+    """Verify that the retry helper retries on transient errors and gives up
+    after _MAX_RETRIES attempts."""
+
+    def test_succeeds_on_second_attempt(self, monkeypatch):
+        """A single transient failure followed by success should return the response."""
+        call_count = 0
+
+        def mock_post(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise httpx.ConnectError("Connection refused")
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status = lambda: None
+            return mock_resp
+
+        monkeypatch.setattr(httpx, "post", mock_post)
+        monkeypatch.setattr(ingest_service.time, "sleep", lambda s: None)
+
+        result = ingest_service._http_call_with_retry(
+            lambda: httpx.post("http://mcp/tools/web.fetch_page", json={}),
+            label="test",
+        )
+        assert result is not None
+        assert call_count == 2
+
+    def test_raises_after_all_retries_exhausted(self, monkeypatch):
+        """All attempts failing must raise the last transport exception."""
+        def always_fail(*args, **kwargs):
+            raise httpx.ConnectError("refused")
+
+        monkeypatch.setattr(httpx, "post", always_fail)
+        monkeypatch.setattr(ingest_service.time, "sleep", lambda s: None)
+
+        with pytest.raises(httpx.ConnectError):
+            ingest_service._http_call_with_retry(
+                lambda: httpx.post("http://mcp/tools/test", json={}),
+                label="test",
+                max_retries=3,
+            )
+
+    def test_does_not_retry_on_4xx(self, monkeypatch):
+        """HTTP 4xx responses must not be retried (deterministic client errors)."""
+        call_count = 0
+
+        def bad_request(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            mock_resp = MagicMock()
+            mock_resp.status_code = 400
+            mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+                "400", request=MagicMock(), response=mock_resp
+            )
+            return mock_resp
+
+        monkeypatch.setattr(httpx, "post", bad_request)
+        monkeypatch.setattr(ingest_service.time, "sleep", lambda s: None)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            ingest_service._http_call_with_retry(
+                lambda: httpx.post("http://mcp/tools/test", json={}),
+                label="test",
+                max_retries=3,
+            )
+        assert call_count == 1  # no retry on 4xx
+
+    def test_retries_on_5xx(self, monkeypatch):
+        """HTTP 5xx responses should be retried."""
+        call_count = 0
+
+        def server_error(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            mock_resp = MagicMock()
+            mock_resp.status_code = 503
+            mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+                "503", request=MagicMock(), response=mock_resp
+            )
+            return mock_resp
+
+        monkeypatch.setattr(httpx, "post", server_error)
+        monkeypatch.setattr(ingest_service.time, "sleep", lambda s: None)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            ingest_service._http_call_with_retry(
+                lambda: httpx.post("http://mcp/tools/test", json={}),
+                label="test",
+                max_retries=3,
+            )
+        assert call_count == 3  # all 3 attempts made

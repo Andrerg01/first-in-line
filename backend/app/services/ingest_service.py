@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -33,6 +34,67 @@ from app.repositories import (
 from app.schemas.ingest import LLMExtractionResult, ManualIngestResponse
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Retry configuration
+# ---------------------------------------------------------------------------
+
+_MAX_RETRIES = 3  # total attempts (1 initial + 2 retries)
+_BACKOFF_BASE = 1.0  # seconds; wait = _BACKOFF_BASE * 2**attempt
+
+_RETRYABLE_TRANSPORT_ERRORS = (
+    httpx.ConnectError,
+    httpx.TimeoutException,
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+)
+
+
+def _http_call_with_retry(
+    fn: "Callable[[], httpx.Response]",
+    *,
+    label: str,
+    max_retries: int = _MAX_RETRIES,
+) -> httpx.Response:
+    """Execute fn() up to max_retries times with exponential backoff.
+
+    Retries on transport errors (connection, timeout, protocol) and HTTP 5xx
+    responses. Does not retry HTTP 4xx (client errors).
+
+    Args:
+        fn: Zero-argument callable that performs the HTTP call and returns
+            an ``httpx.Response``.
+        label: Short string used in log messages to identify the call.
+        max_retries: Total number of attempts.
+
+    Returns:
+        The first successful ``httpx.Response`` (after ``raise_for_status``).
+
+    Raises:
+        The last captured exception when all attempts are exhausted.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            resp = fn()
+            resp.raise_for_status()
+            return resp
+        except _RETRYABLE_TRANSPORT_ERRORS as exc:
+            last_exc = exc
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code < 500:
+                raise  # 4xx — deterministic failure, do not retry
+            last_exc = exc
+        if attempt < max_retries - 1:
+            wait = _BACKOFF_BASE * (2 ** attempt)
+            log.warning(
+                "%s failed (attempt %d/%d), retrying in %.1fs: %s",
+                label, attempt + 1, max_retries, wait, last_exc,
+            )
+            time.sleep(wait)
+        else:
+            log.error("%s failed after %d attempts: %s", label, max_retries, last_exc)
+    raise last_exc  # type: ignore[misc]
 
 # ---------------------------------------------------------------------------
 # System prompt for OpenAI extraction
@@ -82,7 +144,10 @@ brewery, or retail business.
 
 
 def _call_mcp_fetch_page(url: str) -> dict:
-    """Call the MCP web.fetch_page tool endpoint.
+    """Call the MCP web.fetch_page tool endpoint with automatic retry.
+
+    Retries up to ``_MAX_RETRIES`` times on transient transport errors or HTTP
+    5xx responses from the MCP server, using exponential backoff.
 
     Args:
         url: URL to fetch.
@@ -91,13 +156,14 @@ def _call_mcp_fetch_page(url: str) -> dict:
         Parsed JSON response from the MCP server.
 
     Raises:
-        MCPError: If the HTTP request to the MCP server fails or returns an error.
+        MCPError: If all retry attempts fail.
     """
     endpoint = f"{settings.mcp_server_url}/tools/web.fetch_page"
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(endpoint, json={"url": url})
-        resp.raise_for_status()
+        resp = _http_call_with_retry(
+            lambda: httpx.post(endpoint, json={"url": url}, timeout=30.0),
+            label="MCP fetch_page",
+        )
         return resp.json()
     except (httpx.HTTPError, ValueError) as exc:
         log.error("MCP fetch_page failed for %s: %s", url, exc)
@@ -105,7 +171,10 @@ def _call_mcp_fetch_page(url: str) -> dict:
 
 
 def _call_mcp_normalize_text(text: str) -> dict:
-    """Call the MCP web.normalize_text tool endpoint.
+    """Call the MCP web.normalize_text tool endpoint with automatic retry.
+
+    Retries up to ``_MAX_RETRIES`` times on transient transport errors or HTTP
+    5xx responses from the MCP server, using exponential backoff.
 
     Args:
         text: Raw visible text to normalise.
@@ -114,13 +183,14 @@ def _call_mcp_normalize_text(text: str) -> dict:
         Parsed JSON with ``normalized_text`` and ``text_hash`` keys.
 
     Raises:
-        MCPError: If the HTTP request to the MCP server fails or returns an error.
+        MCPError: If all retry attempts fail.
     """
     endpoint = f"{settings.mcp_server_url}/tools/web.normalize_text"
     try:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.post(endpoint, json={"text": text})
-        resp.raise_for_status()
+        resp = _http_call_with_retry(
+            lambda: httpx.post(endpoint, json={"text": text}, timeout=10.0),
+            label="MCP normalize_text",
+        )
         return resp.json()
     except (httpx.HTTPError, ValueError) as exc:
         log.error("MCP normalize_text failed: %s", exc)
@@ -149,7 +219,9 @@ def _extract_event_data(url: str, normalized_text: str) -> LLMExtractionResult:
     if not settings.openai_api_key:
         raise ConfigurationError("OPENAI_API_KEY is not configured on the server.")
 
-    client = OpenAI(api_key=settings.openai_api_key)
+    # max_retries=3 instructs the OpenAI SDK to retry on rate limits and
+    # transient server errors with its own exponential backoff.
+    client = OpenAI(api_key=settings.openai_api_key, max_retries=3)
     user_content = (
         f"URL: {url}\n\nPage text (truncated to 8000 chars):\n"
         + normalized_text[:8000]
