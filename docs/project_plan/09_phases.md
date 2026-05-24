@@ -297,6 +297,7 @@ Prevent duplicate event records and support manual review.
 * Review queue UI.
 * Merge action.
 * Conflict display.
+* Retroactive duplicate scan action.
 
 ## Suggested Tasks
 
@@ -310,6 +311,7 @@ Create review queue frontend page
 Create merge endpoint
 Display conflicting claims
 Allow admin to choose canonical value
+Create retroactive dedup run endpoint
 ```
 
 ## Exit Criteria

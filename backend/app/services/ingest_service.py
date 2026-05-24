@@ -856,7 +856,21 @@ def save_candidate_event(
         )
 
     # ------------------------------------------------------------------
-    # 7. Persist processing decision (link to extraction LLM call)
+    # 7. Deduplication — flag if a near-identical event already exists
+    # ------------------------------------------------------------------
+    from app.services import dedup_service  # local import to avoid circular at module load
+
+    dedup_result = dedup_service.check_and_flag_duplicate(db, event)
+    if dedup_result is not None:
+        log.info(
+            "save_candidate_event: event %s flagged as possible duplicate of %s (score=%.3f)",
+            event.id,
+            dedup_result.event_id,
+            dedup_result.score,
+        )
+
+    # ------------------------------------------------------------------
+    # 8. Persist processing decision (link to extraction LLM call)
     # ------------------------------------------------------------------
     # The last llm_call in the list is the extraction call (the one that
     # produced the event data).  Earlier calls are classification calls.

@@ -24,6 +24,8 @@ class EventListItem(BaseModel):
     state: str | None
     status: str
     confidence_score: float | None
+    possible_duplicate: bool
+    duplicate_of_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
 
@@ -55,5 +57,7 @@ class EventDetail(BaseModel):
     notes: str | None
     status: str
     confidence_score: float | None
+    possible_duplicate: bool
+    duplicate_of_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime

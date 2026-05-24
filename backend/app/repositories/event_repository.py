@@ -98,3 +98,48 @@ def update_event_status(db: Session, event: Event, new_status: str) -> Event:
     event.status = new_status
     db.flush()
     return event
+
+
+def get_review_queue_events(
+    db: Session,
+    *,
+    statuses: tuple[str, ...] = ("candidate", "needs_review"),
+    limit: int = 50,
+    offset: int = 0,
+) -> list[Event]:
+    """Return one globally ordered review queue page across multiple statuses.
+
+    Args:
+        db: Active database session.
+        statuses: Statuses included in the queue.
+        limit: Maximum number of rows to return.
+        offset: Number of rows to skip in the globally ordered queue.
+
+    Returns:
+        A list of ``Event`` ORM instances ordered by created_at descending.
+    """
+    stmt = (
+        select(Event)
+        .where(Event.status.in_(statuses))
+        .order_by(Event.created_at.desc(), Event.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(db.scalars(stmt).all())
+
+
+def list_events_pointing_to_duplicate_target(
+    db: Session,
+    duplicate_of_id: uuid.UUID,
+) -> list[Event]:
+    """Return events currently pointing at the supplied duplicate target.
+
+    Args:
+        db: Active database session.
+        duplicate_of_id: Duplicate target to match.
+
+    Returns:
+        A list of ``Event`` instances whose ``duplicate_of_id`` matches.
+    """
+    stmt = select(Event).where(Event.duplicate_of_id == duplicate_of_id)
+    return list(db.scalars(stmt).all())

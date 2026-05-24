@@ -89,3 +89,53 @@ export function fetchReviewQueue({ limit = 50, offset = 0 } = {}) {
   const params = new URLSearchParams({ limit, offset });
   return request(`/api/admin/review-queue?${params}`);
 }
+
+/**
+ * Fetch side-by-side claim conflicts between two events.
+ * @param {string} eventId - The candidate event UUID
+ * @param {string} otherId - The canonical event UUID
+ * @returns {Promise<Object>}
+ */
+export function fetchConflicts(eventId, otherId) {
+  return request(`/api/admin/events/${eventId}/conflicts?other_id=${otherId}`);
+}
+
+/**
+ * Manually flag (or clear) an event as a possible duplicate.
+ * @param {string} eventId - The event to flag
+ * @param {string|null} duplicateOfId - Canonical event UUID, or null to clear
+ * @returns {Promise<Object>}
+ */
+export function flagDuplicate(eventId, duplicateOfId) {
+  return request(`/api/admin/events/${eventId}/flag-duplicate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ duplicate_of_id: duplicateOfId }),
+  });
+}
+
+/**
+ * Merge a source event into a canonical target event.
+ * @param {string} sourceId - Event to merge away
+ * @param {string} targetId - Canonical event to keep
+ * @param {Object} canonicalFields - Optional field overrides for the target
+ * @returns {Promise<Object>}
+ */
+export function mergeEvents(sourceId, targetId, canonicalFields = {}) {
+  return request(`/api/admin/events/${sourceId}/merge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target_id: targetId, canonical_fields: canonicalFields }),
+  });
+}
+
+/**
+ * Run a retroactive duplicate scan across existing events.
+ * @returns {Promise<Object>}
+ */
+export function runRetroactiveDedup() {
+  return request("/api/admin/dedup/retroactive-run", {
+    method: "POST",
+  });
+}
+

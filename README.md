@@ -12,7 +12,8 @@ Grand Opening Radar discovers nearby business grand openings and preserves sourc
 | 3 | Manual URL ingestion — AdminIngest page, OpenAI extraction pipeline | ✅ Complete |
 | 4 | Scheduled worker — search → fetch → dedupe → telemetry pipeline | ✅ Complete |
 | 5 | LangGraph extraction pipeline — classify, extract, multi-event, LLM call logging | ✅ Complete |
-| 6+ | Deduplication/review, map/calendar, CI/CD, notifications | Planned |
+| 6 | Duplicate handling and review queue improvements | ✅ In Progress |
+| 7+ | Map/calendar, CI/CD, notifications | Planned |
 
 Current version: see `VERSION` file.
 
@@ -133,7 +134,31 @@ python -m worker.app.cli run_once
 | `/` | Event list with filters |
 | `/events/:id` | Event detail with sources and claims |
 | `/admin/ingest` | Paste a URL to trigger manual ingestion |
+| `/admin/review` | Review queue with duplicate merge workflow |
 | `/admin/events/:id` | Verify / reject a candidate event |
+
+## Phase 6 Duplicate Handling
+
+Phase 6 adds deterministic duplicate detection and manual merge tooling:
+
+- Event-level duplicate fields on `events`:
+  - `possible_duplicate` (bool)
+  - `duplicate_of_id` (nullable UUID FK to `events.id`)
+  - `normalized_business_name` (text)
+- Worker ingestion now computes deterministic similarity (name + address + date)
+  and auto-flags likely duplicates.
+- Admin merge and conflict endpoints:
+  - `GET /api/admin/events/{event_id}/conflicts?other_id={uuid}`
+  - `POST /api/admin/events/{event_id}/flag-duplicate`
+  - `POST /api/admin/events/{event_id}/merge`
+- Retroactive duplicate scan endpoint:
+  - `POST /api/admin/dedup/retroactive-run`
+
+The duplicate logic is now split into smaller backend modules:
+
+- `backend/app/services/dedup_scoring.py` — normalization + scoring primitives
+- `backend/app/services/dedup_admin_service.py` — merge, conflict, flagging, retroactive scan
+- `backend/app/services/dedup_service.py` — thin compatibility facade
 
 ## Architecture
 

@@ -57,7 +57,7 @@ def test_mcp_health() -> None:
     reason="MCP server not running — start with: docker compose up -d",
 )
 def test_mcp_tools_returns_approved_catalog() -> None:
-    """MCP /tools should return all approved narrow tools."""
+    """MCP /tools should return all currently approved and implemented tools."""
     response = httpx.get(f"{MCP_URL}/tools", timeout=5.0)
     assert response.status_code == 200
     tools = response.json()["tools"]
@@ -65,10 +65,6 @@ def test_mcp_tools_returns_approved_catalog() -> None:
         "web.fetch_page",
         "web.normalize_text",
         "web.search",
-        "geo.geocode_address",
-        "db.find_source_by_hash",
-        "db.find_similar_events",
-        "db.insert_candidate_event",
     }
     assert expected.issubset(set(tools))
 

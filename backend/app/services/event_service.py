@@ -145,16 +145,4 @@ def list_review_queue(
         A list of ``Event`` instances awaiting review.
     """
     limit = min(limit, 200)
-    events: list[Event] = []
-    for status_val in ("candidate", "needs_review"):
-        events.extend(
-            event_repository.get_events(
-                db,
-                status=status_val,
-                limit=limit,
-                offset=offset,
-            )
-        )
-    # Sort merged list by created_at descending; repo already orders per-status.
-    events.sort(key=lambda e: e.created_at, reverse=True)
-    return events[:limit]
+    return event_repository.get_review_queue_events(db, limit=limit, offset=offset)
