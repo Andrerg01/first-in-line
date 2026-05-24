@@ -53,10 +53,8 @@ Services:
 > **OPENAI_API_KEY** must be set in `.env` for the manual URL ingestion pipeline
 > (`/admin/ingest`) to call OpenAI for event extraction.
 
-> **BRAVE_SEARCH_API_KEY** (optional) enables the Brave Search fallback when
-> DuckDuckGo returns zero results for a query.  Free tier provides 2,000
-> queries/month.  Leave blank to use DuckDuckGo only.  The worker always
-> tries DuckDuckGo first; Brave is only called when DuckDuckGo returns no results.
+> **BRAVE_SEARCH_API_KEY** (optional) required when `SEARCH_PROVIDER` is `brave`
+> or `duckduckgo+brave`.  Free tier provides 2,000 queries/month.
 
 ### 3. Apply migrations and seed data
 
@@ -98,6 +96,18 @@ docker compose exec worker python -m worker.app.cli run
 docker compose exec worker python -m worker.app.cli run --dry-run
 ```
 
+To run locally (outside Docker), set required env vars explicitly — `.env` is only
+loaded by Docker Compose:
+
+```powershell
+Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
+$env:BACKEND_API_URL="http://localhost:8000"
+$env:MCP_SERVER_URL="http://localhost:9000"
+$env:SCRAPER_MAX_RESULTS_PER_QUERY="15"
+$env:OPENAI_API_KEY=(Get-Content .env | Select-String "OPENAI_API_KEY" | ForEach-Object { $_.ToString().Split("=",2)[1] })
+python -m worker.app.cli run_once
+```
+
 **Worker environment variables** (all in `.env`, all have sensible defaults):
 
 | Variable | Default | Description |
@@ -113,6 +123,8 @@ docker compose exec worker python -m worker.app.cli run --dry-run
 | `WORKER_CLASSIFY_MODEL` | `gpt-4o-mini` | Model used for relevance and count classification |
 | `WORKER_EXTRACT_MODEL` | `gpt-4o-mini` | Model used for event extraction |
 | `SCRAPER_LLM_PAGE_LIMIT` | `30` | Max pages to send through the LLM extraction pipeline per run |
+| `SEARCH_PROVIDER` | `duckduckgo` | Search backend: `duckduckgo`, `brave`, `duckduckgo+brave`, or `stub` |
+| `BRAVE_SEARCH_API_KEY` | _(none)_ | API key for Brave Search; required when `SEARCH_PROVIDER` includes `brave` |
 
 ## Pages
 
