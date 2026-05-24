@@ -53,6 +53,12 @@ _SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "duckduckgo")  # duckduckgo
 _MAX_SEARCH_RESULTS = 10
 _SEARCH_TIMEOUT = 8.0   # seconds for DDGS calls; kept short so rate-limit hangs fail fast
 
+# Brave Search API (used as DuckDuckGo fallback when it returns 0 results)
+_BRAVE_SEARCH_API_KEY = os.environ.get("BRAVE_SEARCH_API_KEY", "")
+_BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
+_BRAVE_SEARCH_TIMEOUT = 10.0
+_BRAVE_MAX_RESULTS = 20  # Brave free-tier cap per request
+
 _FETCH_TIMEOUT = 15.0  # seconds
 _MAX_TEXT_BYTES = 500_000  # guard against huge pages
 _MAX_FETCH_RETRIES = 3  # total attempts per URL fetch
@@ -492,6 +498,51 @@ def _search_duckduckgo(query: str, max_results: int) -> list[SearchResultItem]:
     ]
 
 
+def _search_brave(query: str, max_results: int) -> list[SearchResultItem]:
+    """Perform a web search using the Brave Search API.
+
+    Used as a fallback when DuckDuckGo returns no results (e.g. rate-limited).
+    Requires ``BRAVE_SEARCH_API_KEY`` to be set; returns ``[]`` silently if not.
+
+    Args:
+        query: Search query string.
+        max_results: Maximum number of results to return (capped at 20 for free tier).
+
+    Returns:
+        A list of ``SearchResultItem`` ranked by position, or empty on error.
+    """
+    if not _BRAVE_SEARCH_API_KEY:
+        return []
+
+    count = min(max_results, _BRAVE_MAX_RESULTS)
+    try:
+        with httpx.Client(timeout=_BRAVE_SEARCH_TIMEOUT) as client:
+            resp = client.get(
+                _BRAVE_SEARCH_URL,
+                params={"q": query, "count": count},
+                headers={
+                    "X-Subscription-Token": _BRAVE_SEARCH_API_KEY,
+                    "Accept": "application/json",
+                },
+            )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Brave Search error for query %r: %s", query, exc)
+        return []
+
+    raw = data.get("web", {}).get("results", [])
+    return [
+        SearchResultItem(
+            rank=i + 1,
+            title=r.get("title"),
+            url=r.get("url", ""),
+            snippet=r.get("description"),
+        )
+        for i, r in enumerate(raw)
+    ]
+
+
 def _search_stub(query: str, max_results: int) -> list[SearchResultItem]:  # noqa: ARG001
     """Return a deterministic stub result set for testing without network calls.
 
@@ -538,6 +589,17 @@ def web_search(body: SearchRequest) -> SearchResponse:
     else:
         results = _search_duckduckgo(body.query, body.max_results)
         provider = "duckduckgo"
+
+        # Fallback: if DuckDuckGo returned nothing (likely rate-limited) and a
+        # Brave API key is configured, retry the same query with Brave.
+        if not results and _BRAVE_SEARCH_API_KEY:
+            log.info(
+                "DuckDuckGo returned 0 results for %r — trying Brave fallback",
+                body.query,
+            )
+            results = _search_brave(body.query, body.max_results)
+            if results:
+                provider = "brave"
 
     log.info(
         "web.search query=%r provider=%s results=%d",

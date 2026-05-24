@@ -54,6 +54,7 @@ services:
       APP_ENV: ${APP_ENV:-local}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SEARCH_PROVIDER: ${SEARCH_PROVIDER:-duckduckgo}
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
     ports:
       - "9000:9000"
 
