@@ -36,4 +36,4 @@ class ExtractionError(IngestError):
 class ConfigurationError(IngestError):
     """The server is missing required configuration (e.g. an API key)."""
 
-    status_code = 422
+    status_code = 500

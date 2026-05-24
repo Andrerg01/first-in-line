@@ -227,3 +227,115 @@ Example:
 ```
 
 These prompts should be stored in `processing_decisions` or a later `followup_queries` table.
+
+---
+
+## LLM Call Logging (Phase 5 requirement)
+
+Every OpenAI API call must be logged with full token accounting before the
+system is used in production or incurs real cost.
+
+### What to log
+
+Each call to an LLM should produce a `llm_calls` row with:
+
+```text
+id                  UUID primary key
+source_document_id  FK → source_documents (nullable)
+event_id            FK → events (nullable)
+call_type           "extraction" | "classification" | "conflict_resolution" | "followup_query"
+model               e.g. "gpt-4o-mini"
+prompt_tokens       integer — tokens in the system + user messages
+completion_tokens   integer — tokens in the assistant response
+total_tokens        integer — sum; may differ if cached
+cost_usd            numeric(12,8) — derived from model pricing table at call time
+latency_ms          integer — round-trip wall time
+status              "success" | "validation_error" | "api_error"
+error_message       text (nullable)
+created_at          timestamp with time zone
+```
+
+### Implementation notes
+
+- The OpenAI Python client returns `completion.usage` with
+  `prompt_tokens`, `completion_tokens`, and `total_tokens` on every call.
+  These must be captured and persisted alongside the decision record.
+- A lightweight `ModelPricing` lookup (dict or DB table) converts tokens
+  to estimated USD cost. Starting values: gpt-4o-mini input $0.15/1M tokens,
+  output $0.60/1M tokens.
+- `processing_decisions` should gain FK `llm_call_id → llm_calls.id` so any
+  decision record can trace back to the exact LLM call that produced it.
+- The existing `model_name` column on `processing_decisions` is a stopgap;
+  it can be deprecated once `llm_calls` is in place.
+
+### Alembic migration
+
+Add in Phase 5 as part of the LangGraph extraction workflow migration:
+
+```text
+create table llm_calls (...)
+alter table processing_decisions add column llm_call_id uuid references llm_calls(id)
+```
+
+---
+
+## Multi-Event Page Support (Phase 5 requirement)
+
+Some pages announce more than one business opening (e.g. a news roundup,
+a chamber newsletter, a "5 new restaurants opening this summer" article).
+The pipeline must handle these correctly.
+
+### Detection step
+
+Before extraction, a classification step determines how many distinct events
+the page likely contains:
+
+```text
+classify_page_event_count node:
+  input:  normalized page text
+  output: { "event_count_estimate": 1 | "multi", "reasoning": "..." }
+```
+
+A heuristic pre-filter (count of business-name-like patterns, list structures,
+heading count) can gate the LLM call to reduce cost.
+
+### Extraction shape for multi-event pages
+
+When `event_count_estimate == "multi"`, the extraction prompt requests a list:
+
+```json
+{
+  "events": [
+    {
+      "is_relevant": true,
+      "business_name": "...",
+      ...
+    },
+    {
+      "is_relevant": true,
+      "business_name": "...",
+      ...
+    }
+  ]
+}
+```
+
+Pydantic schema: `MultiEventExtractionResult` wrapping
+`list[LLMExtractionResult]`.
+
+### Persistence
+
+Each item in the `events` list goes through the same save path as a single
+event: one `SourceDocument`, one `Event` per relevant item, all sharing the
+same `source_document_id`.
+
+The `event_sources` join table links one source document to many events.
+
+### Plan placement
+
+- Phase 5 (LangGraph): add `classify_page_event_count` node before
+  `extract_event_claims` node.
+- Phase 5: implement `MultiEventExtractionResult` schema alongside
+  `LLMExtractionResult`.
+- Phase 5: update `save_candidate` node to iterate over
+  `extraction_result.events` when the multi-event path was taken.

@@ -48,8 +48,12 @@ def get_source_document_by_id(
     return db.get(SourceDocument, source_id)
 
 
-def find_source_by_hash(db: Session, text_hash: str) -> SourceDocument | None:
+def find_source_by_hash(db: Session, text_hash: str | None) -> SourceDocument | None:
     """Look up a source document by its visible-text hash for deduplication.
+
+    Returns ``None`` immediately when ``text_hash`` is ``None`` or empty,
+    because SQL ``WHERE col = NULL`` is always false and the explicit guard
+    makes the intent clear.
 
     Args:
         db: Active database session.
@@ -58,6 +62,8 @@ def find_source_by_hash(db: Session, text_hash: str) -> SourceDocument | None:
     Returns:
         The matching ``SourceDocument`` or ``None``.
     """
+    if not text_hash:
+        return None
     stmt = select(SourceDocument).where(SourceDocument.visible_text_hash == text_hash)
     return db.scalars(stmt).first()
 

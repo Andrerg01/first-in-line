@@ -228,23 +228,37 @@ Convert new source documents into candidate events through a structured graph.
 
 * LangGraph state definition.
 * Relevance classification node.
-* Event extraction node.
+* **Page event-count classification node** — determines if a page contains
+  one or multiple event announcements before extraction.
+* Event extraction node (single event path).
+* **Multi-event extraction node** — uses `MultiEventExtractionResult` schema
+  when the page contains multiple announcements; each extracted event goes
+  through the same save path, all linked to the same `source_document_id`.
 * Similar event lookup node.
 * Save candidate node.
 * Processing decision records.
+* **LLM call logging** — `llm_calls` table (id, call_type, model,
+  prompt_tokens, completion_tokens, total_tokens, cost_usd, latency_ms,
+  status, created_at); every OpenAI call persists a row; `processing_decisions`
+  gains `llm_call_id` FK.
 
 ## Suggested Tasks
 
 ```text
 Define graph state
 Create classify_relevance node
-Create extract_event_claims node
+Create classify_page_event_count node (heuristic + LLM)
+Create extract_event_claims node (single-event path)
+Create extract_multi_event_claims node (multi-event path)
 Create find_similar_events node
 Create decide_event_action node
-Create save_candidate node
+Create save_candidate node (handles list of events)
 Add model config
 Add retry/error handling
 Log decisions
+Add llm_calls table migration
+Add llm_call_id FK to processing_decisions
+Implement token-to-cost conversion helper
 ```
 
 ## Exit Criteria
@@ -253,8 +267,10 @@ Log decisions
 Daily worker can process newly fetched pages
 Irrelevant pages are rejected
 Relevant pages create candidate events
+Multi-event pages produce one event record per announced business
 Claims and evidence are stored
 Potential duplicates are flagged
+Every LLM call has a llm_calls row with token counts and estimated cost
 ```
 
 ---

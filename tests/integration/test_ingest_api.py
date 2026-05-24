@@ -190,3 +190,32 @@ class TestManualIngestEndpoint:
         assert data["relevant"] is False
         assert data["fetch_status"] == "failed"
         assert data["event_id"] is None
+
+    def test_mcp_fetch_down_returns_502(self, test_client, monkeypatch):
+        """MCP server being down must return HTTP 502 to the caller."""
+        from app.exceptions import MCPError
+
+        def _down(url: str):
+            raise MCPError("Page fetch service is unavailable.")
+
+        monkeypatch.setattr(ingest_service, "_call_mcp_fetch_page", _down)
+        resp = test_client.post(
+            "/api/ingest/manual-url", json={"url": "https://example.com/opening"}
+        )
+        assert resp.status_code == 502
+
+    def test_mcp_normalize_down_returns_502(self, test_client, monkeypatch):
+        """MCP normalize service being down must return HTTP 502 to the caller."""
+        from app.exceptions import MCPError
+
+        def _down(text: str):
+            raise MCPError("Text processing service is unavailable.")
+
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_OK
+        )
+        monkeypatch.setattr(ingest_service, "_call_mcp_normalize_text", _down)
+        resp = test_client.post(
+            "/api/ingest/manual-url", json={"url": "https://example.com/opening"}
+        )
+        assert resp.status_code == 502

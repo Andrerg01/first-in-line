@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 import httpx
 from openai import OpenAI
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -90,7 +91,7 @@ def _call_mcp_fetch_page(url: str) -> dict:
         Parsed JSON response from the MCP server.
 
     Raises:
-        HTTPException: 502 if the MCP call fails.
+        MCPError: If the HTTP request to the MCP server fails or returns an error.
     """
     endpoint = f"{settings.mcp_server_url}/tools/web.fetch_page"
     try:
@@ -113,7 +114,7 @@ def _call_mcp_normalize_text(text: str) -> dict:
         Parsed JSON with ``normalized_text`` and ``text_hash`` keys.
 
     Raises:
-        HTTPException: 502 if the MCP call fails.
+        MCPError: If the HTTP request to the MCP server fails or returns an error.
     """
     endpoint = f"{settings.mcp_server_url}/tools/web.normalize_text"
     try:
@@ -142,7 +143,8 @@ def _extract_event_data(url: str, normalized_text: str) -> LLMExtractionResult:
         A validated ``LLMExtractionResult``.
 
     Raises:
-        HTTPException: 422 if the API key is missing; 502 on call/parse failure.
+        ConfigurationError: If the OpenAI API key is not configured.
+        ExtractionError: If the OpenAI call fails or the response fails Pydantic validation.
     """
     if not settings.openai_api_key:
         raise ConfigurationError("OPENAI_API_KEY is not configured on the server.")
@@ -220,7 +222,9 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
         A ``ManualIngestResponse`` describing the outcome.
 
     Raises:
-        HTTPException: On fetch failure, extraction failure, or missing API key.
+        MCPError: If the MCP fetch or normalize call fails.
+        ConfigurationError: If the OpenAI API key is missing.
+        ExtractionError: If the OpenAI call fails or returns invalid output.
     """
     # 1. Fetch page via MCP -----------------------------------------------
     fetch_result = _call_mcp_fetch_page(url)
@@ -236,7 +240,7 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
             canonical_url=fetch_result.get("canonical_url") or url,
             domain=fetch_result.get("domain"),
             title=fetch_result.get("title"),
-            visible_text=visible_text,
+            visible_text=visible_text or None,
             visible_text_hash=None,
             fetch_status=fetch_status,
             http_status=fetch_result.get("http_status"),
@@ -269,11 +273,14 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
 
     # 2. Normalise text via MCP -------------------------------------------
     norm_result = _call_mcp_normalize_text(visible_text)
-    text_hash: str = norm_result["text_hash"]
-    normalized_text: str = norm_result["normalized_text"]
+    text_hash: str | None = norm_result.get("text_hash")
+    normalized_text: str | None = norm_result.get("normalized_text")
+    if not text_hash or normalized_text is None:
+        log.error("MCP normalize_text returned unexpected payload: %s", norm_result)
+        raise MCPError("Text processing service returned an unexpected response.")
 
     # 3. Deduplication check ----------------------------------------------
-    existing_doc = source_repository.find_source_by_hash(db, text_hash)
+    existing_doc = source_repository.find_source_by_hash(db, text_hash)  # type: ignore[arg-type]
     if existing_doc:
         event_row = source_repository.get_event_source_for_source_document(
             db, existing_doc.id
@@ -305,7 +312,8 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
             message="Duplicate URL — source document already exists.",
         )
 
-    # 4. Persist source document ------------------------------------------
+    # 4. Persist source document — committed before any LLM call so the
+    #    source document always survives even if extraction fails.
     source_doc = source_repository.create_source_document(
         db,
         url=url,
@@ -321,6 +329,44 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
         fetched_at=datetime.now(timezone.utc),
         error_message=fetch_result.get("error_message"),
     )
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        # Duplicate arrived via concurrent request — treat as dedup hit.
+        db.expire_all()
+        existing_doc = source_repository.find_source_by_hash(db, text_hash)  # type: ignore[arg-type]
+        if existing_doc:
+            event_row = source_repository.get_event_source_for_source_document(
+                db, existing_doc.id
+            )
+            event: Event | None = (
+                event_repository.get_event_by_id(db, event_row.event_id)
+                if event_row
+                else None
+            )
+            return ManualIngestResponse(
+                source_id=existing_doc.id,
+                duplicate=True,
+                relevant=event is not None,
+                event_id=event.id if event else None,
+                business_name=event.business_name if event else None,
+                event_type=event.event_type if event else None,
+                category=event.category if event else None,
+                event_date=event.event_date if event else None,
+                city=event.city if event else None,
+                state=event.state if event else None,
+                status=event.status if event else None,
+                confidence_score=(
+                    float(event.confidence_score)
+                    if event and event.confidence_score is not None
+                    else None
+                ),
+                claims_count=0,
+                fetch_status="skipped",
+                message="Duplicate URL — source document already exists.",
+            )
+        raise
 
     # 5. OpenAI extraction ------------------------------------------------
     extraction = _extract_event_data(url, normalized_text)
@@ -374,7 +420,7 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
         model_name=settings.openai_model,
     )
 
-    db.commit()
+    db.commit()  # commits event, claims, event_source, processing_decision
 
     return ManualIngestResponse(
         source_id=source_doc.id,

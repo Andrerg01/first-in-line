@@ -334,3 +334,106 @@ class TestIngestManualUrlOpenAIErrors:
         monkeypatch.setattr(ingest_service, "_extract_event_data", _boom)
         with pytest.raises(ExtractionError):
             ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+    def test_source_document_survives_extraction_error(self, db_session, monkeypatch):
+        """Source document must be committed before OpenAI is called (CRITICAL-1).
+
+        If extraction fails, the source doc must already exist in the DB so
+        that the pipeline is auditable and the same URL won't re-bill OpenAI.
+        """
+        from sqlalchemy import select
+
+        committed: list[bool] = []
+
+        original_commit = db_session.commit
+
+        def _tracking_commit():
+            original_commit()
+            committed.append(True)
+
+        monkeypatch.setattr(db_session, "commit", _tracking_commit)
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_OK
+        )
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_normalize_text", lambda text: _NORM_OK
+        )
+        monkeypatch.setattr(ingest_service.settings, "openai_api_key", "key")
+
+        def _boom(url: str, text: str):
+            raise ExtractionError("boom")
+
+        monkeypatch.setattr(ingest_service, "_extract_event_data", _boom)
+
+        with pytest.raises(ExtractionError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+        # At least one commit must have occurred before the exception.
+        assert committed, "Source document commit must happen before calling OpenAI"
+        # Source document should now be in the DB.
+        doc = db_session.scalars(
+            select(SourceDocument).where(SourceDocument.url == "https://example.com/opening")
+        ).first()
+        assert doc is not None, "Source document must survive an ExtractionError"
+
+
+# ---------------------------------------------------------------------------
+# Tests — MCPError raised (service-down paths) (HIGH-3)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestManualUrlMCPErrors:
+    def test_fetch_page_mcp_down_raises_mcp_error(self, db_session, monkeypatch):
+        """_call_mcp_fetch_page raising MCPError must propagate out of ingest_manual_url."""
+        def _down(url: str):
+            raise MCPError("Page fetch service is unavailable.")
+
+        monkeypatch.setattr(ingest_service, "_call_mcp_fetch_page", _down)
+        with pytest.raises(MCPError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+    def test_normalize_text_mcp_down_raises_mcp_error(self, db_session, monkeypatch):
+        """_call_mcp_normalize_text raising MCPError must propagate out of ingest_manual_url."""
+        def _down(text: str):
+            raise MCPError("Text processing service is unavailable.")
+
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_OK
+        )
+        monkeypatch.setattr(ingest_service, "_call_mcp_normalize_text", _down)
+        with pytest.raises(MCPError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+    def test_normalize_text_bad_payload_raises_mcp_error(self, db_session, monkeypatch):
+        """Unexpected MCP normalize response (missing keys) must raise MCPError."""
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_fetch_page", lambda url: _FETCH_OK
+        )
+        monkeypatch.setattr(
+            ingest_service, "_call_mcp_normalize_text", lambda text: {"error": "oops"}
+        )
+        with pytest.raises(MCPError):
+            ingest_service.ingest_manual_url(db_session, "https://example.com/opening")
+
+
+# ---------------------------------------------------------------------------
+# Tests — duplicate of a not-relevant first ingestion (MEDIUM-4)
+# ---------------------------------------------------------------------------
+
+
+class TestIngestManualUrlDuplicateNotRelevant:
+    def test_duplicate_of_not_relevant_returns_duplicate_true_no_event(
+        self, db_session, monkeypatch
+    ):
+        """Re-submitting a URL whose first ingestion was not-relevant must return
+        duplicate=True and event_id=None."""
+        _patch_mcp_and_llm(monkeypatch, extraction=_EXTRACTION_NOT_RELEVANT)
+        resp1 = ingest_service.ingest_manual_url(db_session, "https://example.com/irrelevant")
+        assert resp1.relevant is False
+        assert resp1.event_id is None
+
+        # Second submission of same URL/hash
+        resp2 = ingest_service.ingest_manual_url(db_session, "https://example.com/irrelevant")
+        assert resp2.duplicate is True
+        assert resp2.event_id is None
+        assert resp2.source_id == resp1.source_id

@@ -9,7 +9,6 @@ Future tools (LangGraph Phase 5):
 - geo.geocode_address
 - db.find_source_by_hash
 - db.find_similar_events
-- db.insert_candidate_event
 """
 
 from __future__ import annotations
@@ -18,6 +17,7 @@ import hashlib
 import ipaddress
 import logging
 import re
+import socket
 from urllib.parse import urlparse
 
 import httpx
@@ -35,13 +35,14 @@ TOOL_LIST = [
     "web.normalize_text",
 ]
 
-# Planned tools — not yet implemented; kept here to document the roadmap
+# Planned tools — not yet implemented; kept here to document the roadmap.
+# NOTE: MCP tools must be read-only or bounded narrow writes; any event
+# creation/modification must go through the backend API, not MCP directly.
 _PLANNED_TOOLS = [
     "web.search",
     "geo.geocode_address",
     "db.find_source_by_hash",
     "db.find_similar_events",
-    "db.insert_candidate_event",
 ]
 
 _FETCH_TIMEOUT = 15.0  # seconds
@@ -130,8 +131,30 @@ def _is_safe_url(url: str) -> tuple[bool, str]:
         ):
             return False, f"IP '{host}' resolves to a private/reserved range."
     except ValueError:
-        # Not a bare IP address — hostname is acceptable
-        pass
+        # Not a bare IP literal — resolve the hostname and validate resolved IPs
+        # to guard against DNS rebinding attacks.
+        try:
+            resolved = socket.getaddrinfo(host, None)
+        except socket.gaierror:
+            # Cannot resolve — reject rather than allow an unknown target.
+            return False, f"Host '{host}' could not be resolved."
+        for family, _type, _proto, _canonname, sockaddr in resolved:
+            ip_str = sockaddr[0]
+            try:
+                resolved_addr = ipaddress.ip_address(ip_str)
+                if (
+                    resolved_addr.is_private
+                    or resolved_addr.is_loopback
+                    or resolved_addr.is_link_local
+                    or resolved_addr.is_reserved
+                    or resolved_addr.is_multicast
+                ):
+                    return (
+                        False,
+                        f"Host '{host}' resolves to private/reserved IP {ip_str}.",
+                    )
+            except ValueError:
+                continue
 
     return True, ""
 
