@@ -65,7 +65,7 @@ CronJob starts
   -> create search_run
   -> load target locations
   -> generate search queries
-  -> for each query (with QUERY_INTERVAL_SECONDS delay between):
+  -> for each query (with SCRAPER_RATE_LIMIT_SECONDS delay between):
        -> web.search (telemetry recorded)
        -> store search_results
        -> canonicalize URLs
@@ -259,9 +259,9 @@ Protections in place:
 |-------|-----------|
 | MCP server (`web.search`) | `_SEARCH_TIMEOUT=8s` hard timeout per query |
 | Worker `mcp_client.search()` | `timeout=12s`, `max_retries=1`; logs `RATE LIMIT WARNING` when all retries time out |
-| Worker pipeline | `QUERY_INTERVAL_SECONDS` (default `2.0`) sleep between consecutive queries |
+| Worker pipeline | `SCRAPER_RATE_LIMIT_SECONDS` (default `2.0`) sleep between consecutive queries |
 
-Set `QUERY_INTERVAL_SECONDS=0` in test environments to keep tests fast.
+Set `SCRAPER_RATE_LIMIT_SECONDS=0` in test environments to keep tests fast.
 
 ---
 

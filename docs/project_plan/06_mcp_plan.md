@@ -201,6 +201,20 @@ arbitrary_http_post
 
 Prefer typed, narrow tools.
 
+### SSRF protection
+
+`web.fetch_page` validates the target URL with `_is_safe_url` before fetching:
+- blocks non-http/https schemes
+- resolves the hostname and rejects private/internal IP ranges
+- blocks known internal service hostnames
+
+**Known limitation (backlog):** the current guard resolves the hostname at validation
+time and then re-resolves it at fetch time.  A DNS rebinding attack (public IP during
+validation → private IP at request time) can bypass the guard.  Hardening approach:
+pin the validated IP in the outbound request (pass resolved IP as target, set `Host`
+header to the original hostname) so both resolution steps use the same address.
+Track this as a security hardening task before any public deployment.
+
 ## Local MCP Deployment
 
 ```text

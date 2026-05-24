@@ -112,9 +112,9 @@ warnings and never abort the run. Records land in the `pipeline_tool_calls` tabl
 The pipeline enforces a mandatory pause between consecutive search queries:
 
 ```python
-QUERY_INTERVAL_SECONDS=2.0  # env var; set to 0 in tests
+SCRAPER_RATE_LIMIT_SECONDS=2.0  # env var; set to 0 in tests
 ```
 
-Set `QUERY_INTERVAL_SECONDS=0` in test environments. The MCP client also enforces an
+Set `SCRAPER_RATE_LIMIT_SECONDS=0` in test environments. The MCP client also enforces an
 8-second per-query timeout. When all retries time out, `mcp_client.search` logs a prominent
 `RATE LIMIT WARNING` at the WARNING level before returning an empty result list.

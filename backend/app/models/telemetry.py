@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid as _uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     DateTime,
@@ -18,7 +18,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
 
-_now = datetime.utcnow
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
 
 class PipelineToolCall(Base):
     """One recorded tool call within a pipeline discovery run.

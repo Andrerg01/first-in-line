@@ -205,7 +205,7 @@ class TestRunOnceHappyPath:
         summary = pipeline.run_once(dry_run=False)
 
         store_outcomes = [o for name, o in recorded_outcomes if name == "db.store_source_document"]
-        assert "duplicate" in store_outcomes
+        assert store_outcomes == ["duplicate"]
         assert summary.source_docs_skipped >= 1
 
     def test_fetch_errors_set_partial_status(self, monkeypatch):

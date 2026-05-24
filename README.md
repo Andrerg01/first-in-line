@@ -10,7 +10,8 @@ Grand Opening Radar discovers nearby business grand openings and preserves sourc
 | 1 | Database schema, Alembic migrations, CRUD backend, seed data | ✅ Complete |
 | 2 | Basic frontend — event list, event detail, admin verify/reject | ✅ Complete |
 | 3 | Manual URL ingestion — AdminIngest page, OpenAI extraction pipeline | ✅ Complete |
-| 4+ | Scheduled search, LangGraph pipeline, map/calendar, CI/CD, notifications | Planned |
+| 4 | Scheduled worker — search → fetch → dedupe → telemetry pipeline | ✅ Complete |
+| 5+ | LangGraph orchestration, map/calendar, CI/CD, notifications | Planned |
 
 Current version: see `VERSION` file.
 
@@ -51,6 +52,11 @@ Services:
 > **OPENAI_API_KEY** must be set in `.env` for the manual URL ingestion pipeline
 > (`/admin/ingest`) to call OpenAI for event extraction.
 
+> **BRAVE_SEARCH_API_KEY** (optional) enables the Brave Search fallback when
+> DuckDuckGo returns zero results for a query.  Free tier provides 2,000
+> queries/month.  Leave blank to use DuckDuckGo only.  The worker always
+> tries DuckDuckGo first; Brave is only called when DuckDuckGo returns no results.
+
 ### 3. Apply migrations and seed data
 
 Run once after the stack is first started (or after a schema change):
@@ -73,12 +79,35 @@ Run from the `backend/` directory (alembic.ini lives there).
 
 ```bash
 # Unit + integration (no Docker required — uses SQLite in-memory)
-# 73 tests as of Phase 3
 python -m pytest tests/unit/ tests/integration/ -v
 
 # E2E smoke (requires docker compose up -d)
 python -m pytest tests/e2e/ -v
 ```
+
+## Running the Worker
+
+The discovery worker is normally triggered by Docker Compose command or cron. To run manually:
+
+```bash
+# Inside the running worker container (one-shot run)
+docker compose exec worker python -m worker.app.cli run
+
+# Dry-run (no API/DB calls)
+docker compose exec worker python -m worker.app.cli run --dry-run
+```
+
+**Worker environment variables** (all in `.env`, all have sensible defaults):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SCRAPER_TARGET_LOCATION` | `Greenville, SC` | Location injected into search queries |
+| `SCRAPER_MAX_RESULTS_PER_QUERY` | `10` | Max search results to request per query |
+| `SCRAPER_DAILY_PAGE_LIMIT` | `50` | Max URLs to fetch per run |
+| `SCRAPER_RATE_LIMIT_SECONDS` | `2.0` | Pause between consecutive queries (seconds) |
+| `WORKER_REQUEST_TIMEOUT` | `30.0` | HTTP timeout for MCP/API calls (seconds) |
+| `WORKER_BACKOFF_BASE` | `1.0` | Exponential backoff base for retries |
+| `WORKER_MAX_RETRIES` | `3` | Max retries on transient failures |
 
 ## Pages
 

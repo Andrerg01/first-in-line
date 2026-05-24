@@ -26,7 +26,7 @@ import httpx
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 log = logging.getLogger(__name__)
 
@@ -50,14 +50,13 @@ _PLANNED_TOOLS = [
 
 # Search configuration
 _SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "duckduckgo")  # duckduckgo | stub
-_MAX_SEARCH_RESULTS = 10
 _SEARCH_TIMEOUT = 8.0   # seconds for DDGS calls; kept short so rate-limit hangs fail fast
 
 # Brave Search API (used as DuckDuckGo fallback when it returns 0 results)
 _BRAVE_SEARCH_API_KEY = os.environ.get("BRAVE_SEARCH_API_KEY", "")
 _BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
 _BRAVE_SEARCH_TIMEOUT = 10.0
-_BRAVE_MAX_RESULTS = 20  # Brave free-tier cap per request
+_BRAVE_MAX_RESULTS = 20  # Brave free-tier hard cap per request
 
 _FETCH_TIMEOUT = 15.0  # seconds
 _MAX_TEXT_BYTES = 500_000  # guard against huge pages
@@ -101,7 +100,7 @@ class FetchPageResponse(BaseModel):
 class NormalizeTextRequest(BaseModel):
     """Request body for web.normalize_text."""
 
-    text: str
+    text: str = Field(max_length=600_000)
 
 
 class NormalizeTextResponse(BaseModel):
@@ -115,7 +114,7 @@ class SearchRequest(BaseModel):
     """Request body for web.search."""
 
     query: str
-    max_results: int = _MAX_SEARCH_RESULTS
+    max_results: int = Field(default=10, ge=1, le=50)  # caller (worker) sets this from SCRAPER_MAX_RESULTS_PER_QUERY
 
 
 class SearchResultItem(BaseModel):
@@ -481,8 +480,8 @@ def _search_duckduckgo(query: str, max_results: int) -> list[SearchResultItem]:
     except Exception as exc:  # noqa: BLE001
         # Rate-limits and transient errors should degrade gracefully so the
         # pipeline can mark the query as failed without a 500 response.
-        msg = str(exc)
-        if "202" in msg or "ratelimit" in msg.lower():
+        msg = str(exc).lower()
+        if "ratelimit" in msg or "rate limit" in msg or "too many" in msg:
             log.warning("DuckDuckGo RATE LIMIT for query %r: %s", query, exc)
         else:
             log.warning("DuckDuckGo search error for query %r: %s", query, exc)

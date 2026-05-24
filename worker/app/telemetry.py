@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Callable, Literal
 
 from worker.app.logger import get_logger
 
