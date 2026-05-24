@@ -91,6 +91,7 @@ export default function EventList() {
           <p style={styles.subtitle}>Upcoming grand openings in Greenville, SC and beyond</p>
         </div>
         <Link to="/admin/ingest" style={styles.ingestLink}>+ Ingest URL</Link>
+        <Link to="/admin/review" style={{ ...styles.ingestLink, marginLeft: 8, background: "#2563eb" }}>Review Queue</Link>
       </header>
 
       {/* Filters */}

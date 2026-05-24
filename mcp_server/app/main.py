@@ -1,11 +1,11 @@
 """MCP server — exposes the approved narrow-tool catalog as HTTP endpoints.
 
 Tools implemented in this module:
-- web.fetch_page   — fetch a URL and extract visible text
+- web.fetch_page    — fetch a URL and extract visible text
 - web.normalize_text — normalize and SHA-256 hash visible text
+- web.search        — search the web and return ranked URL results
 
 Future tools (LangGraph Phase 5):
-- web.search
 - geo.geocode_address
 - db.find_source_by_hash
 - db.find_similar_events
@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import logging
+import os
 import re
 import socket
 import time
@@ -23,6 +24,7 @@ from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+from duckduckgo_search import DDGS
 from fastapi import FastAPI
 from pydantic import BaseModel
 
@@ -34,17 +36,28 @@ app = FastAPI(title="Grand Opening Radar MCP Server", version="0.1.0")
 TOOL_LIST = [
     "web.fetch_page",
     "web.normalize_text",
+    "web.search",
 ]
 
 # Planned tools — not yet implemented; kept here to document the roadmap.
 # NOTE: MCP tools must be read-only or bounded narrow writes; any event
 # creation/modification must go through the backend API, not MCP directly.
 _PLANNED_TOOLS = [
-    "web.search",
     "geo.geocode_address",
     "db.find_source_by_hash",
     "db.find_similar_events",
 ]
+
+# Search configuration
+_SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "duckduckgo")  # duckduckgo | stub
+_MAX_SEARCH_RESULTS = 10
+_SEARCH_TIMEOUT = 8.0   # seconds for DDGS calls; kept short so rate-limit hangs fail fast
+
+# Brave Search API (used as DuckDuckGo fallback when it returns 0 results)
+_BRAVE_SEARCH_API_KEY = os.environ.get("BRAVE_SEARCH_API_KEY", "")
+_BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
+_BRAVE_SEARCH_TIMEOUT = 10.0
+_BRAVE_MAX_RESULTS = 20  # Brave free-tier cap per request
 
 _FETCH_TIMEOUT = 15.0  # seconds
 _MAX_TEXT_BYTES = 500_000  # guard against huge pages
@@ -96,6 +109,30 @@ class NormalizeTextResponse(BaseModel):
 
     normalized_text: str
     text_hash: str
+
+
+class SearchRequest(BaseModel):
+    """Request body for web.search."""
+
+    query: str
+    max_results: int = _MAX_SEARCH_RESULTS
+
+
+class SearchResultItem(BaseModel):
+    """A single search result entry."""
+
+    rank: int
+    title: str | None
+    url: str
+    snippet: str | None
+
+
+class SearchResponse(BaseModel):
+    """Ranked list of search results for a query."""
+
+    query: str
+    provider: str
+    results: list[SearchResultItem]
 
 
 # ---------------------------------------------------------------------------
@@ -422,3 +459,150 @@ def normalize_text(body: NormalizeTextRequest) -> NormalizeTextResponse:
         normalized_text=normalized,
         text_hash=_sha256(normalized),
     )
+
+
+def _search_duckduckgo(query: str, max_results: int) -> list[SearchResultItem]:
+    """Perform a text search using DuckDuckGo and return ranked results.
+
+    Uses the ``duckduckgo_search`` library which requires no API key.
+    Returns an empty list on rate-limit or any search error so the pipeline
+    can continue gracefully.
+
+    Args:
+        query: Search query string.
+        max_results: Maximum number of results to return.
+
+    Returns:
+        A list of ``SearchResultItem`` ranked by position.
+    """
+    try:
+        with DDGS(timeout=_SEARCH_TIMEOUT) as ddgs:
+            raw = ddgs.text(query, max_results=max_results)
+    except Exception as exc:  # noqa: BLE001
+        # Rate-limits and transient errors should degrade gracefully so the
+        # pipeline can mark the query as failed without a 500 response.
+        msg = str(exc)
+        if "202" in msg or "ratelimit" in msg.lower():
+            log.warning("DuckDuckGo RATE LIMIT for query %r: %s", query, exc)
+        else:
+            log.warning("DuckDuckGo search error for query %r: %s", query, exc)
+        return []
+    return [
+        SearchResultItem(
+            rank=i + 1,
+            title=r.get("title"),
+            url=r["href"],
+            snippet=r.get("body"),
+        )
+        for i, r in enumerate(raw or [])
+    ]
+
+
+def _search_brave(query: str, max_results: int) -> list[SearchResultItem]:
+    """Perform a web search using the Brave Search API.
+
+    Used as a fallback when DuckDuckGo returns no results (e.g. rate-limited).
+    Requires ``BRAVE_SEARCH_API_KEY`` to be set; returns ``[]`` silently if not.
+
+    Args:
+        query: Search query string.
+        max_results: Maximum number of results to return (capped at 20 for free tier).
+
+    Returns:
+        A list of ``SearchResultItem`` ranked by position, or empty on error.
+    """
+    if not _BRAVE_SEARCH_API_KEY:
+        return []
+
+    count = min(max_results, _BRAVE_MAX_RESULTS)
+    try:
+        with httpx.Client(timeout=_BRAVE_SEARCH_TIMEOUT) as client:
+            resp = client.get(
+                _BRAVE_SEARCH_URL,
+                params={"q": query, "count": count},
+                headers={
+                    "X-Subscription-Token": _BRAVE_SEARCH_API_KEY,
+                    "Accept": "application/json",
+                },
+            )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Brave Search error for query %r: %s", query, exc)
+        return []
+
+    raw = data.get("web", {}).get("results", [])
+    return [
+        SearchResultItem(
+            rank=i + 1,
+            title=r.get("title"),
+            url=r.get("url", ""),
+            snippet=r.get("description"),
+        )
+        for i, r in enumerate(raw)
+    ]
+
+
+def _search_stub(query: str, max_results: int) -> list[SearchResultItem]:  # noqa: ARG001
+    """Return a deterministic stub result set for testing without network calls.
+
+    Args:
+        query: Search query string (included in stub titles).
+        max_results: Maximum number of stub results to return.
+
+    Returns:
+        A fixed list of ``SearchResultItem`` entries.
+    """
+    stubs = [
+        ("Stub: Grand Opening Restaurant Greenville SC", "https://example.com/stub/1"),
+        ("Stub: New Brewery Opening Downtown Greenville", "https://example.com/stub/2"),
+        ("Stub: Food Truck Grand Opening Greenville", "https://example.com/stub/3"),
+    ]
+    return [
+        SearchResultItem(
+            rank=i + 1,
+            title=f"{title} [{query}]",
+            url=url,
+            snippet=f"Stub snippet for result {i + 1}.",
+        )
+        for i, (title, url) in enumerate(stubs[:max_results])
+    ]
+
+
+@app.post("/tools/web.search", response_model=SearchResponse)
+def web_search(body: SearchRequest) -> SearchResponse:
+    """Search the web and return a ranked list of results.
+
+    Uses DuckDuckGo by default (no API key required).  Set the
+    ``SEARCH_PROVIDER=stub`` environment variable to get deterministic
+    stub results for testing.
+
+    Args:
+        body: Request containing the query string and max_results cap.
+
+    Returns:
+        A SearchResponse with ranked result items.
+    """
+    provider = _SEARCH_PROVIDER
+    if provider == "stub":
+        results = _search_stub(body.query, body.max_results)
+    else:
+        results = _search_duckduckgo(body.query, body.max_results)
+        provider = "duckduckgo"
+
+        # Fallback: if DuckDuckGo returned nothing (likely rate-limited) and a
+        # Brave API key is configured, retry the same query with Brave.
+        if not results and _BRAVE_SEARCH_API_KEY:
+            log.info(
+                "DuckDuckGo returned 0 results for %r — trying Brave fallback",
+                body.query,
+            )
+            results = _search_brave(body.query, body.max_results)
+            if results:
+                provider = "brave"
+
+    log.info(
+        "web.search query=%r provider=%s results=%d",
+        body.query, provider, len(results),
+    )
+    return SearchResponse(query=body.query, provider=provider, results=results)

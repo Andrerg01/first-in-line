@@ -79,3 +79,13 @@ export function ingestUrl(url) {
     body: JSON.stringify({ url }),
   });
 }
+
+/**
+ * Fetch the admin review queue (candidate and needs_review events).
+ * @param {Object} params - { limit, offset }
+ * @returns {Promise<Array>}
+ */
+export function fetchReviewQueue({ limit = 50, offset = 0 } = {}) {
+  const params = new URLSearchParams({ limit, offset });
+  return request(`/api/admin/review-queue?${params}`);
+}
