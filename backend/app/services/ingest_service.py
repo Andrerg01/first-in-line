@@ -32,6 +32,7 @@ from app.repositories import (
     processing_repository,
     search_repository,
     source_repository,
+    telemetry_repository,
 )
 from app.schemas.ingest import LLMExtractionResult, ManualIngestResponse
 from app.schemas.search import (
@@ -601,8 +602,6 @@ def save_tool_calls(
     Returns:
         Number of rows inserted, or ``None`` if the SearchRun was not found.
     """
-    from app.repositories import telemetry_repository
-
     run = search_repository.get_search_run(db, run_id)
     if run is None:
         log.warning("save_tool_calls: SearchRun %s not found, dropping records", run_id)

@@ -147,6 +147,15 @@ class TestClassifyOutcome:
         exc = RuntimeError("connection timed out after 30s")
         assert classify_outcome(exc) == "timeout"
 
+    def test_timeout_via_cause(self):
+        """Wrapped RuntimeError whose __cause__ is a TimeoutError is classified as timeout."""
+        import httpx
+
+        cause = httpx.ConnectTimeout("timed out")
+        wrapper = RuntimeError("MCP web.search failed after 1 attempts")
+        wrapper.__cause__ = cause
+        assert classify_outcome(wrapper) == "timeout"
+
     def test_generic_error(self):
         exc = ValueError("unexpected value")
         assert classify_outcome(exc) == "error"

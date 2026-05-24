@@ -66,7 +66,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     op.create_table(
         "pipeline_tool_calls",
-        sa.Column("id", sa.UUID(), nullable=False, default=uuid.uuid4),
+        sa.Column("id", sa.UUID(), nullable=False, server_default=sa.text("gen_random_uuid()")),
         sa.Column("search_run_id", sa.UUID(), nullable=False),
         # The logical tool being called, e.g. 'web.search', 'web.fetch_page',
         # 'web.normalize_text', 'backend.store_source_doc'.

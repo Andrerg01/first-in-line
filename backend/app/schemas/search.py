@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -42,7 +43,7 @@ class SearchRunOut(BaseModel):
 class SearchRunStatusUpdate(BaseModel):
     """Payload to update a search run's terminal status and aggregate stats."""
 
-    status: str  # completed | failed | partial | cancelled
+    status: Literal["completed", "failed", "partial", "cancelled"]
     notes: str | None = None
     # Optional aggregate stats written when the worker closes the run.
     queries_executed: int | None = None

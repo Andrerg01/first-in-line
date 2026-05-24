@@ -159,6 +159,99 @@ class TestRunOnceHappyPath:
         # how many queries returned it.
         assert fetch_calls.count("https://example.com/same-page") == 1
 
+    def test_duplicate_store_result_records_duplicate_outcome(self, monkeypatch):
+        """When store_source_document returns created=False, outcome should be 'duplicate'."""
+        run_id = uuid.uuid4()
+        doc_id = uuid.uuid4()
+        recorded_outcomes: list[str] = []
+
+        original_record = None
+
+        monkeypatch.setattr(
+            pipeline.api_client, "create_search_run",
+            lambda **kw: SearchRunRecord(id=run_id, status="running"),
+        )
+        monkeypatch.setattr(pipeline.api_client, "finish_search_run", lambda *a, **kw: None)
+        monkeypatch.setattr(pipeline.api_client, "record_tool_calls", lambda *a, **kw: 0)
+        monkeypatch.setattr(pipeline.api_client, "save_search_results", lambda *a, **kw: 1)
+        # Return created=False to simulate a duplicate
+        monkeypatch.setattr(
+            pipeline.api_client, "store_source_document",
+            lambda **kw: SourceDocumentResult(
+                created=False, source_document_id=doc_id, duplicate=True
+            ),
+        )
+        monkeypatch.setattr(
+            pipeline.mcp_client, "search",
+            lambda q, **kw: _make_search_response(q, ["https://example.com/dup"]),
+        )
+        monkeypatch.setattr(pipeline.mcp_client, "fetch_page", lambda url: _make_fetch_response(url))
+        monkeypatch.setattr(
+            pipeline.mcp_client, "normalize_text",
+            lambda text: _make_normalize_response("duphash"),
+        )
+        monkeypatch.setattr(pipeline.time, "sleep", lambda s: None)
+
+        # Intercept telemetry records
+        from worker.app.telemetry import TelemetryCollector
+        original_record_fn = TelemetryCollector.record
+
+        def tracking_record(self, *, tool_name, input_summary, outcome, **kw):
+            recorded_outcomes.append((tool_name, outcome))
+            original_record_fn(self, tool_name=tool_name, input_summary=input_summary, outcome=outcome, **kw)
+
+        monkeypatch.setattr(TelemetryCollector, "record", tracking_record)
+
+        summary = pipeline.run_once(dry_run=False)
+
+        store_outcomes = [o for name, o in recorded_outcomes if name == "db.store_source_document"]
+        assert "duplicate" in store_outcomes
+        assert summary.source_docs_skipped >= 1
+
+    def test_fetch_errors_set_partial_status(self, monkeypatch):
+        """Any fetch error — even with some successes — should produce 'partial' status."""
+        run_id = uuid.uuid4()
+        call_count = 0
+
+        monkeypatch.setattr(
+            pipeline.api_client, "create_search_run",
+            lambda **kw: SearchRunRecord(id=run_id, status="running"),
+        )
+        monkeypatch.setattr(pipeline.api_client, "finish_search_run", lambda *a, **kw: None)
+        monkeypatch.setattr(pipeline.api_client, "record_tool_calls", lambda *a, **kw: 0)
+        monkeypatch.setattr(pipeline.api_client, "save_search_results", lambda *a, **kw: 1)
+        monkeypatch.setattr(
+            pipeline.api_client, "store_source_document",
+            lambda **kw: SourceDocumentResult(
+                created=True, source_document_id=uuid.uuid4(), duplicate=False
+            ),
+        )
+        monkeypatch.setattr(
+            pipeline.mcp_client, "search",
+            lambda q, **kw: _make_search_response(q, [
+                "https://example.com/ok",
+                "https://example.com/fail",
+            ]),
+        )
+
+        def mixed_fetch(url):
+            if "fail" in url:
+                raise RuntimeError("fetch error")
+            return _make_fetch_response(url)
+
+        monkeypatch.setattr(pipeline.mcp_client, "fetch_page", mixed_fetch)
+        monkeypatch.setattr(
+            pipeline.mcp_client, "normalize_text",
+            lambda text: _make_normalize_response("hash1"),
+        )
+        monkeypatch.setattr(pipeline.time, "sleep", lambda s: None)
+
+        summary = pipeline.run_once(dry_run=False)
+
+        assert summary.source_docs_created >= 1
+        assert summary.fetch_errors >= 1
+        assert summary.final_status == "partial"
+
 
 class TestRunOnceFetchError:
     """run_once gracefully handles fetch failures."""

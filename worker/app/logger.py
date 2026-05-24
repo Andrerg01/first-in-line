@@ -109,7 +109,8 @@ def configure_logging(level: str | None = None) -> None:
     root.setLevel(resolved_level)
 
     # Avoid duplicate handlers if called more than once (e.g., in tests).
-    if not any(isinstance(h, logging.StreamHandler) for h in root.handlers):
+    # Use type() not isinstance() because FileHandler is a subclass of StreamHandler.
+    if not any(type(h) is logging.StreamHandler for h in root.handlers):
         handler = logging.StreamHandler()
         handler.setFormatter(
             logging.Formatter(fmt=_DEFAULT_FORMAT, datefmt=_DATE_FORMAT)

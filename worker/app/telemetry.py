@@ -214,7 +214,13 @@ def classify_outcome(exc: Exception) -> OutcomeCode:
     import httpx  # local import to avoid circular dependency
 
     msg = str(exc).lower()
-    if isinstance(exc, httpx.TimeoutException) or "timed out" in msg or "timeout" in msg:
+    cause = exc.__cause__
+    if (
+        isinstance(exc, httpx.TimeoutException)
+        or isinstance(cause, httpx.TimeoutException)
+        or "timed out" in msg
+        or "timeout" in msg
+    ):
         return "timeout"
     if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
         return "rate_limit"

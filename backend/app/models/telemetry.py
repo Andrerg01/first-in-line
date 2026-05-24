@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid as _uuid
+from datetime import datetime
 
 from sqlalchemy import (
     DateTime,
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
 
+_now = datetime.utcnow
 
 class PipelineToolCall(Base):
     """One recorded tool call within a pipeline discovery run.
@@ -55,8 +57,9 @@ class PipelineToolCall(Base):
     attempt_number: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="1"
     )
-    created_at: Mapped[_uuid.UUID] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        default=_now,
         server_default=text("now()"),
     )

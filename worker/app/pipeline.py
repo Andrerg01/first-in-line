@@ -34,7 +34,7 @@ from dataclasses import dataclass
 
 from worker.app import api_client, mcp_client
 from worker.app.config import settings
-from worker.app.logger import get_logger
+from worker.app.logger import RunLoggerAdapter, get_logger
 from worker.app.search_queries import QUERY_SET_VERSION, get_queries
 from worker.app.telemetry import TelemetryCollector, classify_outcome
 from worker.app.url_utils import canonicalize_url, is_valid_http_url
@@ -127,7 +127,7 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
     log.info("Starting discovery run: run_id=%s dry_run=%s queries=%d", run_id, dry_run, len(queries))
 
     try:
-        _execute_run(summary, dry_run=dry_run, start=start, queries=queries, collector=collector)
+        _execute_run(summary, run_log=log, dry_run=dry_run, start=start, queries=queries, collector=collector)
     except Exception as exc:  # noqa: BLE001
         log.error("Discovery run failed with unexpected error: %s", exc, exc_info=True)
         summary.final_status = "failed"
@@ -179,6 +179,7 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
 def _execute_run(
     summary: RunSummary,
     *,
+    run_log: RunLoggerAdapter,
     dry_run: bool,
     start: float,
     queries: list[str],
@@ -188,6 +189,7 @@ def _execute_run(
 
     Args:
         summary: RunSummary to update with counts and status.
+        run_log: Run-scoped logger carrying the run_id for all log lines.
         dry_run: Skip actual API/MCP calls when True.
         start: Monotonic start time used for elapsed-time formatting.
         queries: Search query strings to execute.
@@ -205,12 +207,12 @@ def _execute_run(
 
     for i, query in enumerate(queries, start=1):
         _p(f"{_fmt_elapsed(start)} +- Query {i:{w}d}/{n_queries}: {query!r}")
-        log.info("Searching [%d/%d]: %r", i, n_queries, query)
+        run_log.info("Searching [%d/%d]: %r", i, n_queries, query)
         summary.queries_executed += 1
 
         if dry_run:
             _p(f"{_fmt_elapsed(start)} \\- [dry run] skipped")
-            log.info("[dry_run] would call MCP web.search for %r", query)
+            run_log.info("[dry_run] would call MCP web.search for %r", query)
             continue
 
         t0 = collector.start_timer()
@@ -222,7 +224,7 @@ def _execute_run(
                 outcome="success",
                 duration_ms=collector.elapsed_ms(t0),
             )
-            log.debug(
+            run_log.debug(
                 "web.search: query=%r provider=%s results=%d duration_ms=%d",
                 query,
                 getattr(resp, "provider", "unknown"),
@@ -237,7 +239,7 @@ def _execute_run(
                 duration_ms=collector.elapsed_ms(t0),
                 error_message=str(exc),
             )
-            log.warning("Search failed for %r: %s", query, exc)
+            run_log.warning("Search failed for %r: %s", query, exc)
             _p(f"{_fmt_elapsed(start)} \\- x ERROR  {exc}")
             continue
 
@@ -266,16 +268,16 @@ def _execute_run(
             try:
                 api_client.save_search_results(summary.run_id, result_dicts)
                 summary.search_results_found += len(result_dicts)
-                log.info("Saved %d results for %r", len(result_dicts), query)
+                run_log.info("Saved %d results for %r", len(result_dicts), query)
             except Exception as exc:  # noqa: BLE001
-                log.warning("Failed to save results for %r: %s", query, exc)
+                run_log.warning("Failed to save results for %r: %s", query, exc)
 
         _p(
             f"{_fmt_elapsed(start)} \\- -> {len(result_dicts)} results"
             f"  (+{new_this_query} new unique | {len(seen_canonical)} total unique)"
         )
         if i < n_queries and not dry_run and settings.query_interval_seconds > 0:
-            log.debug(
+            run_log.debug(
                 "Sleeping %.1fs between queries (QUERY_INTERVAL_SECONDS)",
                 settings.query_interval_seconds,
             )
@@ -312,18 +314,18 @@ def _execute_run(
         _p(f"              {fetch_url[:90]}")
         if title_preview:
             _p(f"              {title_preview}")
-        log.info("Fetching [%d/%d]: %s", idx, n_to_fetch, fetch_url)
+        run_log.info("Fetching [%d/%d]: %s", idx, n_to_fetch, fetch_url)
 
         if dry_run:
             _p(f"{_fmt_elapsed(start)} \\- [dry run] skipped")
-            log.info("[dry_run] would fetch %s", fetch_url)
+            run_log.info("[dry_run] would fetch %s", fetch_url)
             continue
 
         # ---- web.fetch_page ----
         t0 = collector.start_timer()
         try:
             fetch_resp = mcp_client.fetch_page(fetch_url)
-            log.debug(
+            run_log.debug(
                 "web.fetch_page: url=%s status=%s http=%s duration_ms=%d",
                 fetch_url,
                 fetch_resp.fetch_status,
@@ -338,7 +340,7 @@ def _execute_run(
                 duration_ms=collector.elapsed_ms(t0),
                 error_message=str(exc),
             )
-            log.warning("Fetch error for %s: %s", fetch_url, exc)
+            run_log.warning("Fetch error for %s: %s", fetch_url, exc)
             summary.fetch_errors += 1
             _p(f"{_fmt_elapsed(start)} \\- x FETCH ERROR  {exc}")
             _p(_running_totals(summary))
@@ -353,7 +355,7 @@ def _execute_run(
                 http_status=fetch_resp.http_status,
                 error_message=fetch_resp.error_message or fetch_resp.fetch_status,
             )
-            log.info(
+            run_log.info(
                 "Fetch non-success for %s: status=%s error=%s",
                 fetch_url, fetch_resp.fetch_status, fetch_resp.error_message,
             )
@@ -381,7 +383,7 @@ def _execute_run(
                 outcome="success",
                 duration_ms=collector.elapsed_ms(t0),
             )
-            log.debug(
+            run_log.debug(
                 "web.normalize_text: url=%s hash=%s duration_ms=%d",
                 fetch_url,
                 (norm_resp.text_hash or "")[:8],
@@ -395,7 +397,7 @@ def _execute_run(
                 duration_ms=collector.elapsed_ms(t0),
                 error_message=str(exc),
             )
-            log.warning("Normalize error for %s: %s", fetch_url, exc)
+            run_log.warning("Normalize error for %s: %s", fetch_url, exc)
             summary.fetch_errors += 1
             _p(f"{_fmt_elapsed(start)} \\- x NORMALIZE ERROR  {exc}")
             _p(_running_totals(summary))
@@ -431,7 +433,7 @@ def _execute_run(
                 duration_ms=collector.elapsed_ms(t0),
                 error_message=str(exc),
             )
-            log.warning("Store error for %s: %s", fetch_url, exc)
+            run_log.warning("Store error for %s: %s", fetch_url, exc)
             summary.fetch_errors += 1
             _p(f"{_fmt_elapsed(start)} \\- x STORE ERROR  {exc}")
             _p(_running_totals(summary))
@@ -440,14 +442,20 @@ def _execute_run(
         if store_result.created:
             summary.source_docs_created += 1
             short_hash = (norm_resp.text_hash or "")[:8]
-            log.info(
+            run_log.info(
                 "New source doc stored: id=%s hash=%s url=%s",
                 store_result.source_document_id, short_hash, fetch_url,
             )
             _p(f"{_fmt_elapsed(start)} \\- ok NEW    hash:{short_hash}")
         else:
+            collector.record(
+                tool_name="db.store_source_document",
+                input_summary=fetch_url,
+                outcome="duplicate",
+                duration_ms=collector.elapsed_ms(t0),
+            )
             summary.source_docs_skipped += 1
-            log.info(
+            run_log.info(
                 "Duplicate skipped: id=%s url=%s",
                 store_result.source_document_id, fetch_url,
             )
@@ -455,7 +463,7 @@ def _execute_run(
 
         _p(_running_totals(summary))
 
-    if summary.fetch_errors > 0 and summary.source_docs_created == 0:
+    if summary.fetch_errors > 0:
         summary.final_status = "partial"
     else:
         summary.final_status = "completed"
