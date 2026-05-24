@@ -28,6 +28,10 @@ class WorkerSettings:
     backoff_base: float
     max_retries: int
     query_interval_seconds: float
+    llm_page_limit: int
+    openai_api_key: str
+    classify_model: str
+    extract_model: str
 
     def __init__(self) -> None:
         self.backend_api_url = os.environ.get(
@@ -50,6 +54,16 @@ class WorkerSettings:
         self.max_retries = int(os.environ.get("WORKER_MAX_RETRIES", "3"))
         self.query_interval_seconds = float(
             os.environ.get("SCRAPER_RATE_LIMIT_SECONDS", "2.0")
+        )
+        self.llm_page_limit = int(
+            os.environ.get("SCRAPER_LLM_PAGE_LIMIT", "30")
+        )
+        self.openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+        self.classify_model = os.environ.get(
+            "WORKER_CLASSIFY_MODEL", "gpt-4o-mini"
+        )
+        self.extract_model = os.environ.get(
+            "WORKER_EXTRACT_MODEL", "gpt-4o-mini"
         )
 
 

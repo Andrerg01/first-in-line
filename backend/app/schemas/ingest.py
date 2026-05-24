@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.llm_calls import LLMCallCreate
+
 
 class ManualIngestRequest(BaseModel):
     """Request body for POST /api/ingest/manual-url."""
@@ -94,4 +96,52 @@ class ManualIngestResponse(BaseModel):
     confidence_score: float | None = None
     claims_count: int = 0
     fetch_status: str
+    message: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Worker candidate submission schemas
+# ---------------------------------------------------------------------------
+
+
+class CandidateClaimCreate(BaseModel):
+    """A single claim extracted by the worker LangGraph pipeline."""
+
+    claim_type: str
+    claim_value: str
+    claim_text: str | None = None
+    confidence_score: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class CandidateEventCreate(BaseModel):
+    """Payload the worker sends to create a candidate event from a source doc.
+
+    Includes all extracted event fields, extracted claims, and the LLM call
+    records for every OpenAI API call made while processing this source doc.
+    """
+
+    source_document_id: uuid.UUID
+    search_run_id: uuid.UUID | None = None
+    business_name: str | None = None
+    event_name: str | None = None
+    event_type: str = "unknown"
+    category: str | None = None
+    event_date_str: str | None = None
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    promotion_text: str | None = None
+    confidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    claims: list[CandidateClaimCreate] = []
+    llm_calls: list[LLMCallCreate] = []
+
+
+class CandidateEventResult(BaseModel):
+    """Response for POST /api/ingest/source-document/{id}/candidate."""
+
+    event_id: uuid.UUID | None = None
+    created: bool = False
+    irrelevant: bool = False
+    duplicate: bool = False
+    llm_call_ids: list[uuid.UUID] = []
     message: str = ""

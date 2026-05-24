@@ -34,6 +34,9 @@ from dataclasses import dataclass
 
 from worker.app import api_client, mcp_client
 from worker.app.config import settings
+from worker.app.extraction.graph import build_extraction_graph
+from worker.app.extraction.schemas import LLMCallData
+from worker.app.extraction.state import ExtractionState
 from worker.app.logger import RunLoggerAdapter, get_logger
 from worker.app.search_queries import QUERY_SET_VERSION, get_queries
 from worker.app.telemetry import TelemetryCollector, classify_outcome
@@ -85,6 +88,10 @@ class RunSummary:
     source_docs_created: int = 0
     source_docs_skipped: int = 0
     fetch_errors: int = 0
+    llm_pages_processed: int = 0
+    events_created: int = 0
+    pages_irrelevant: int = 0
+    extraction_errors: int = 0
     final_status: str = "completed"
     notes: str = ""
     elapsed_seconds: float = 0.0
@@ -161,7 +168,9 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
             log.error("Failed to close SearchRun %s: %s", run_id, exc)
 
     log.info(
-        "Run %s complete: status=%s queries=%d results=%d urls=%d created=%d skipped=%d errors=%d",
+        "Run %s complete: status=%s queries=%d results=%d urls=%d "
+        "created=%d skipped=%d errors=%d "
+        "llm_pages=%d events=%d irrelevant=%d extraction_errors=%d",
         run_id,
         summary.final_status,
         summary.queries_executed,
@@ -170,6 +179,10 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
         summary.source_docs_created,
         summary.source_docs_skipped,
         summary.fetch_errors,
+        summary.llm_pages_processed,
+        summary.events_created,
+        summary.pages_irrelevant,
+        summary.extraction_errors,
     )
     return summary
 
@@ -196,6 +209,8 @@ def _execute_run(
     """
     seen_canonical: set[str] = set()
     ordered_urls: list[tuple[str, dict]] = []  # (canonical_url, meta)
+    # Collect newly created source docs for LangGraph extraction
+    new_source_docs: list[tuple[uuid.UUID, str, str]] = []  # (id, url, normalized_text)
     n_queries = len(queries)
     w = len(str(n_queries))  # width for zero-padded query index
 
@@ -446,6 +461,10 @@ def _execute_run(
                 store_result.source_document_id, short_hash, fetch_url,
             )
             _p(f"{_fmt_elapsed(start)} \\- ok NEW    hash:{short_hash}")
+            # Queue for LangGraph extraction
+            new_source_docs.append(
+                (store_result.source_document_id, fetch_url, norm_resp.normalized_text)
+            )
         else:
             collector.record(
                 tool_name="db.store_source_document",
@@ -466,6 +485,142 @@ def _execute_run(
         summary.final_status = "partial"
     else:
         summary.final_status = "completed"
+
+    # ------------------------------------------------------------------
+    # 5. LangGraph extraction phase
+    # ------------------------------------------------------------------
+    to_extract = new_source_docs[: settings.llm_page_limit]
+    n_to_extract = len(to_extract)
+
+    _p(f"\n{_fmt_elapsed(start)} EXTRACT -- {n_to_extract} new pages (LLM cap: {settings.llm_page_limit})")
+
+    if n_to_extract == 0 or dry_run:
+        if dry_run and new_source_docs:
+            _p(f"{_fmt_elapsed(start)} [dry run] would extract {len(new_source_docs)} pages")
+        elif n_to_extract == 0:
+            _p(f"{_fmt_elapsed(start)} Nothing to extract.")
+        return
+
+    if not settings.openai_api_key:
+        run_log.warning("OPENAI_API_KEY not set — skipping extraction phase")
+        _p(f"{_fmt_elapsed(start)} WARNING: OPENAI_API_KEY not set; skipping extraction")
+        return
+
+    graph = build_extraction_graph(
+        openai_api_key=settings.openai_api_key,
+        classify_model=settings.classify_model,
+        extract_model=settings.extract_model,
+    )
+    ew = len(str(n_to_extract))
+
+    for eidx, (source_doc_id, fetch_url, normalized_text) in enumerate(to_extract, start=1):
+        _p(f"{_fmt_elapsed(start)} +- Extract {eidx:{ew}d}/{n_to_extract}: {fetch_url[:80]}")
+        run_log.info("Extracting [%d/%d]: %s", eidx, n_to_extract, fetch_url)
+        summary.llm_pages_processed += 1
+
+        initial_state: ExtractionState = {
+            "source_document_id": source_doc_id,
+            "search_run_id": summary.run_id,
+            "url": fetch_url,
+            "normalized_text": normalized_text,
+            "extracted_events": [],
+        }
+
+        try:
+            final_state: ExtractionState = graph.invoke(initial_state)
+        except Exception as exc:  # noqa: BLE001
+            run_log.error("Extraction graph error for %s: %s", fetch_url, exc)
+            summary.extraction_errors += 1
+            _p(f"{_fmt_elapsed(start)} \\- x GRAPH ERROR  {exc}")
+            continue
+
+        # Collect all LLM calls from this graph run
+        all_llm_calls: list[LLMCallData] = []
+        for field in ("relevance_llm_call", "count_llm_call", "extraction_llm_call"):
+            call_data = final_state.get(field)  # type: ignore[literal-required]
+            if call_data is not None:
+                all_llm_calls.append(call_data)
+
+        extracted_events = final_state.get("extracted_events") or []
+
+        if not final_state.get("is_relevant"):
+            run_log.info(
+                "Page irrelevant: url=%s reason=%r",
+                fetch_url,
+                final_state.get("relevance_reason"),
+            )
+            summary.pages_irrelevant += 1
+            _p(f"{_fmt_elapsed(start)} \\- IRRELEVANT  {final_state.get('relevance_reason', '')[:60]}")
+            # Still save LLM calls via an irrelevant candidate submission
+            # (no claims → backend marks as irrelevant and only logs LLM records)
+            if all_llm_calls:
+                try:
+                    api_client.save_candidate_event(
+                        source_doc_id,
+                        search_run_id=summary.run_id,
+                        business_name=None,
+                        event_name=None,
+                        event_type="unknown",
+                        category=None,
+                        event_date_str=None,
+                        address=None,
+                        city=None,
+                        state=None,
+                        promotion_text=None,
+                        confidence_score=0.0,
+                        claims=[],
+                        llm_calls=[c.model_dump() for c in all_llm_calls],
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    run_log.warning("Failed to save irrelevant LLM calls for %s: %s", fetch_url, exc)
+            continue
+
+        if not extracted_events:
+            run_log.warning(
+                "Extraction returned no events for relevant page: url=%s error=%s",
+                fetch_url, final_state.get("error"),
+            )
+            summary.extraction_errors += 1
+            _p(f"{_fmt_elapsed(start)} \\- x NO EVENTS  {final_state.get('error', '')[:60]}")
+            continue
+
+        # Save one candidate per extracted event (multi-event support)
+        for event in extracted_events:
+            try:
+                result = api_client.save_candidate_event(
+                    source_doc_id,
+                    search_run_id=summary.run_id,
+                    business_name=event.business_name,
+                    event_name=event.event_name,
+                    event_type=event.event_type,
+                    category=event.category,
+                    event_date_str=event.event_date_str,
+                    address=event.address,
+                    city=event.city,
+                    state=event.state,
+                    promotion_text=event.promotion_text,
+                    confidence_score=event.confidence_score,
+                    claims=[c.model_dump() for c in event.claims],
+                    llm_calls=[c.model_dump() for c in all_llm_calls],
+                )
+                if result.created:
+                    summary.events_created += 1
+                    run_log.info(
+                        "Candidate event created: event_id=%s business=%r url=%s",
+                        result.event_id, event.business_name, fetch_url,
+                    )
+                    _p(
+                        f"{_fmt_elapsed(start)} \\- NEW EVENT  "
+                        f"{(event.business_name or '?')[:50]}  "
+                        f"conf:{event.confidence_score:.2f}"
+                    )
+                elif result.duplicate:
+                    run_log.info("Duplicate event skipped: url=%s", fetch_url)
+                    _p(f"{_fmt_elapsed(start)} \\- dup EVENT  already recorded")
+            except Exception as exc:  # noqa: BLE001
+                run_log.error("Failed to save candidate event for %s: %s", fetch_url, exc)
+                summary.extraction_errors += 1
+                _p(f"{_fmt_elapsed(start)} \\- x SAVE ERROR  {exc}")
 
 
 

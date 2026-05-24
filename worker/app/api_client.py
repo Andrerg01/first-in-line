@@ -280,3 +280,88 @@ def store_source_document(
         source_document_id=uuid.UUID(data["source_document_id"]),
         duplicate=data["duplicate"],
     )
+
+
+@dataclass
+class CandidateEventResult:
+    """Result from the create-candidate-event endpoint."""
+
+    event_id: uuid.UUID | None
+    created: bool
+    irrelevant: bool
+    duplicate: bool
+    llm_call_ids: list[uuid.UUID]
+    message: str
+
+
+def save_candidate_event(
+    source_document_id: uuid.UUID,
+    *,
+    search_run_id: uuid.UUID | None,
+    business_name: str | None,
+    event_name: str | None,
+    event_type: str,
+    category: str | None,
+    event_date_str: str | None,
+    address: str | None,
+    city: str | None,
+    state: str | None,
+    promotion_text: str | None,
+    confidence_score: float,
+    claims: list[dict],
+    llm_calls: list[dict],
+) -> CandidateEventResult:
+    """Submit a worker-extracted candidate event to the backend API.
+
+    Args:
+        source_document_id: UUID of the source document that was processed.
+        search_run_id: Optional parent SearchRun UUID.
+        business_name: Extracted business name.
+        event_name: Extracted event name.
+        event_type: Extracted event type string.
+        category: Extracted category string.
+        event_date_str: Extracted date in YYYY-MM-DD format.
+        address: Extracted street address.
+        city: Extracted city name.
+        state: Extracted 2-letter state code.
+        promotion_text: Extracted promotion/offer text.
+        confidence_score: Extraction confidence (0.0–1.0).
+        claims: List of claim dicts (claim_type, claim_value, claim_text).
+        llm_calls: List of LLM call telemetry dicts.
+
+    Returns:
+        A ``CandidateEventResult`` describing the outcome.
+    """
+    payload: dict = {
+        "source_document_id": str(source_document_id),
+        "business_name": business_name,
+        "event_name": event_name,
+        "event_type": event_type,
+        "category": category,
+        "event_date_str": event_date_str,
+        "address": address,
+        "city": city,
+        "state": state,
+        "promotion_text": promotion_text,
+        "confidence_score": confidence_score,
+        "claims": claims,
+        "llm_calls": llm_calls,
+    }
+    if search_run_id is not None:
+        payload["search_run_id"] = str(search_run_id)
+
+    data = _api_request(
+        "POST",
+        f"/api/ingest/source-document/{source_document_id}/candidate",
+        payload,
+        label="save_candidate_event",
+    )
+    return CandidateEventResult(
+        event_id=uuid.UUID(data["event_id"]) if data.get("event_id") else None,
+        created=data.get("created", False),
+        irrelevant=data.get("irrelevant", False),
+        duplicate=data.get("duplicate", False),
+        llm_call_ids=[uuid.UUID(i) for i in data.get("llm_call_ids", [])],
+        message=data.get("message", ""),
+    )
+

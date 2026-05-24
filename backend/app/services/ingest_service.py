@@ -7,6 +7,7 @@ Functions:
 - finish_search_run: Mark a SearchRun as completed/failed.
 - save_search_results: Bulk-insert SearchResult rows for a run.
 - store_source_document_from_fetch: Dedup + persist a SourceDocument from MCP output.
+- save_candidate_event: Persist a candidate event + claims + LLM calls from the worker.
 """
 
 from __future__ import annotations
@@ -29,12 +30,18 @@ from app.models.sources import SourceDocument
 from app.repositories import (
     claims_repository,
     event_repository,
+    llm_call_repository,
     processing_repository,
     search_repository,
     source_repository,
     telemetry_repository,
 )
-from app.schemas.ingest import LLMExtractionResult, ManualIngestResponse
+from app.schemas.ingest import (
+    CandidateEventCreate,
+    CandidateEventResult,
+    LLMExtractionResult,
+    ManualIngestResponse,
+)
 from app.schemas.search import (
     SearchResultCreate,
     SearchRunCreate,
@@ -712,5 +719,152 @@ def store_source_document_from_fetch(
         created=True,
         source_document_id=doc.id,
         duplicate=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Worker candidate event persistence
+# ---------------------------------------------------------------------------
+
+
+def save_candidate_event(
+    db: Session, body: CandidateEventCreate
+) -> CandidateEventResult:
+    """Persist a candidate event, its claims, and all LLM call records.
+
+    Called by the worker after the LangGraph extraction pipeline produces
+    an extraction result for a source document.  Idempotent: if the source
+    document already has a linked event the call returns with
+    ``duplicate=True`` and no new records are written.
+
+    Atomic: all inserts (LLM calls, event, event_source, claims, processing
+    decision) are committed together.  If any step fails the transaction is
+    rolled back so the database stays consistent.
+
+    Args:
+        db: Active database session.
+        body: Validated ``CandidateEventCreate`` payload from the worker.
+
+    Returns:
+        A ``CandidateEventResult`` describing the outcome.
+    """
+    # ------------------------------------------------------------------
+    # 1. Guard — skip if source document already linked to an event
+    # ------------------------------------------------------------------
+    event_source_row = source_repository.get_event_source_for_source_document(
+        db, body.source_document_id
+    )
+    if event_source_row is not None:
+        log.info(
+            "save_candidate_event: source_doc %s already linked to event %s — skipping",
+            body.source_document_id,
+            event_source_row.event_id,
+        )
+        return CandidateEventResult(
+            event_id=event_source_row.event_id,
+            duplicate=True,
+            message="Source document already linked to an event.",
+        )
+
+    # ------------------------------------------------------------------
+    # 2. Log all LLM calls (flush; do not commit yet)
+    # ------------------------------------------------------------------
+    llm_call_records = llm_call_repository.bulk_create_llm_calls(
+        db, body.llm_calls
+    )
+    llm_call_ids = [r.id for r in llm_call_records]
+
+    # ------------------------------------------------------------------
+    # 3. Handle irrelevant pages — record decision and return early
+    # ------------------------------------------------------------------
+    # A candidate with no business_name and no claims means the LangGraph
+    # classified the page as irrelevant.  Persist a processing decision and
+    # return without creating an event.
+    if not body.business_name and not body.claims:
+        processing_repository.create_processing_decision(
+            db,
+            source_document_id=body.source_document_id,
+            event_id=None,
+            decision_type="worker_extraction",
+            decision_value="irrelevant",
+            reason="LangGraph classified page as not relevant to a grand-opening event.",
+            model_name=None,
+            llm_call_id=llm_call_ids[0] if llm_call_ids else None,
+        )
+        db.commit()
+        return CandidateEventResult(
+            irrelevant=True,
+            llm_call_ids=llm_call_ids,
+            message="Page classified as irrelevant; no event created.",
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Create event record
+    # ------------------------------------------------------------------
+    event_date = _parse_event_date(body.event_date_str)
+    event = event_repository.create_event(
+        db,
+        business_name=body.business_name,
+        event_name=body.event_name,
+        event_type=body.event_type or "unknown",
+        category=body.category,
+        event_date=event_date,
+        address=body.address,
+        city=body.city,
+        state=body.state,
+        promotion_text=body.promotion_text,
+        status="candidate",
+        confidence_score=body.confidence_score,
+    )
+
+    # ------------------------------------------------------------------
+    # 5. Link source document → event
+    # ------------------------------------------------------------------
+    source_repository.create_event_source(
+        db, event_id=event.id, source_document_id=body.source_document_id
+    )
+
+    # ------------------------------------------------------------------
+    # 6. Persist claims
+    # ------------------------------------------------------------------
+    for claim in body.claims:
+        claims_repository.create_claim(
+            db,
+            event_id=event.id,
+            source_document_id=body.source_document_id,
+            claim_type=claim.claim_type,
+            claim_value=claim.claim_value,
+            claim_text=claim.claim_text,
+            confidence_score=claim.confidence_score,
+        )
+
+    # ------------------------------------------------------------------
+    # 7. Persist processing decision (link to extraction LLM call)
+    # ------------------------------------------------------------------
+    # The last llm_call in the list is the extraction call (the one that
+    # produced the event data).  Earlier calls are classification calls.
+    extraction_call_id = llm_call_ids[-1] if llm_call_ids else None
+    processing_repository.create_processing_decision(
+        db,
+        source_document_id=body.source_document_id,
+        event_id=event.id,
+        decision_type="worker_extraction",
+        decision_value="candidate_created",
+        reason=f"LangGraph extracted candidate event; confidence={body.confidence_score:.2f}",
+        model_name=None,
+        llm_call_id=extraction_call_id,
+    )
+
+    db.commit()
+    log.info(
+        "save_candidate_event: created event %s for source_doc %s",
+        event.id,
+        body.source_document_id,
+    )
+    return CandidateEventResult(
+        event_id=event.id,
+        created=True,
+        llm_call_ids=llm_call_ids,
+        message=f"Candidate event created: {body.business_name!r}",
     )
 
