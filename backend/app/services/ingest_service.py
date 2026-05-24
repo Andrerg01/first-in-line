@@ -1,13 +1,12 @@
-"""Ingest service — orchestrates the manual URL ingestion pipeline.
+"""Ingest service — orchestrates the manual URL ingestion pipeline and
+scheduled search run persistence.
 
-Steps executed by ingest_manual_url:
-1. Call MCP web.fetch_page to retrieve visible text from the URL.
-2. Call MCP web.normalize_text to clean and SHA-256 hash the text.
-3. Check for a duplicate source document by hash.
-4. Persist the SourceDocument.
-5. Call OpenAI to extract structured event data; validate with Pydantic.
-6. Persist the Event (if relevant), EventSource link, EventClaims, and
-   a ProcessingDecision for auditability.
+Functions:
+- ingest_manual_url: 8-step manual ingestion pipeline (fetch → extract → save).
+- start_search_run: Create a SearchRun record for a worker discovery run.
+- finish_search_run: Mark a SearchRun as completed/failed.
+- save_search_results: Bulk-insert SearchResult rows for a run.
+- store_source_document_from_fetch: Dedup + persist a SourceDocument from MCP output.
 """
 
 from __future__ import annotations
@@ -15,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from datetime import datetime, timezone
 
 import httpx
@@ -25,13 +25,23 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.exceptions import ConfigurationError, ExtractionError, MCPError
 from app.models.events import Event
+from app.models.sources import SourceDocument
 from app.repositories import (
     claims_repository,
     event_repository,
     processing_repository,
+    search_repository,
     source_repository,
 )
 from app.schemas.ingest import LLMExtractionResult, ManualIngestResponse
+from app.schemas.search import (
+    SearchResultCreate,
+    SearchRunCreate,
+    SearchRunOut,
+    SearchRunStatusUpdate,
+    SourceDocumentFromFetch,
+    SourceDocumentStoreResult,
+)
 
 log = logging.getLogger(__name__)
 
@@ -519,3 +529,153 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
             else "Page is not relevant to grand openings."
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Search run and source document persistence (called by the worker)
+# ---------------------------------------------------------------------------
+
+
+def start_search_run(db: Session, body: SearchRunCreate) -> SearchRunOut:
+    """Create and persist a new SearchRun with status=running.
+
+    Args:
+        db: Active database session.
+        body: Parameters for the new run.
+
+    Returns:
+        A ``SearchRunOut`` representing the newly created run.
+    """
+    run = search_repository.create_search_run(
+        db,
+        run_type=body.run_type,
+        query_set_version=body.query_set_version,
+        notes=body.notes,
+    )
+    return SearchRunOut.model_validate(run)
+
+
+def finish_search_run(
+    db: Session, run_id: uuid.UUID, body: SearchRunStatusUpdate
+) -> SearchRunOut | None:
+    """Mark a SearchRun as completed or failed.
+
+    Args:
+        db: Active database session.
+        run_id: UUID of the SearchRun to close.
+        body: Terminal status and optional notes.
+
+    Returns:
+        Updated ``SearchRunOut``, or ``None`` if the run was not found.
+    """
+    run = search_repository.update_search_run_status(
+        db,
+        run_id,
+        status=body.status,
+        notes=body.notes,
+    )
+    if run is None:
+        return None
+    return SearchRunOut.model_validate(run)
+
+
+def save_search_results(
+    db: Session,
+    run_id: uuid.UUID,
+    results: list[SearchResultCreate],
+) -> int | None:
+    """Bulk-insert SearchResult rows for a run.
+
+    Verifies the parent SearchRun exists before inserting.
+
+    Args:
+        db: Active database session.
+        run_id: UUID of the parent SearchRun.
+        results: List of result payloads to persist.
+
+    Returns:
+        Number of rows saved, or ``None`` if the SearchRun was not found.
+    """
+    run = search_repository.get_search_run(db, run_id)
+    if run is None:
+        return None
+    for item in results:
+        search_repository.create_search_result(
+            db,
+            search_run_id=run_id,
+            query=item.query,
+            rank=item.rank,
+            title=item.title,
+            url=item.url,
+            snippet=item.snippet,
+            search_provider=item.search_provider,
+        )
+    return len(results)
+
+
+def store_source_document_from_fetch(
+    db: Session, body: SourceDocumentFromFetch
+) -> SourceDocumentStoreResult:
+    """Persist a source document from a worker fetch result, skipping duplicates.
+
+    Checks for an existing SourceDocument with the same ``visible_text_hash``.
+    If found, returns the existing record's ID with ``created=False``.
+    Otherwise inserts a new record.
+
+    Args:
+        db: Active database session.
+        body: Fetch result payload including hash, text, and metadata.
+
+    Returns:
+        A ``SourceDocumentStoreResult`` with the document ID and creation flag.
+    """
+    existing = source_repository.find_source_by_hash(db, body.visible_text_hash)
+    if existing is not None:
+        log.info(
+            "Source document duplicate skipped: hash=%s url=%s",
+            body.visible_text_hash,
+            body.url,
+        )
+        return SourceDocumentStoreResult(
+            created=False,
+            source_document_id=existing.id,
+            duplicate=True,
+        )
+
+    now = datetime.now(timezone.utc)
+    doc = SourceDocument(
+        url=body.url,
+        canonical_url=body.canonical_url,
+        domain=body.domain,
+        title=body.title,
+        fetched_at=now,
+        visible_text=body.visible_text,
+        visible_text_hash=body.visible_text_hash,
+        fetch_status=body.fetch_status,
+        http_status=body.http_status,
+        content_type=body.content_type,
+        error_message=body.error_message,
+        fetch_method="scheduled_worker",
+    )
+    db.add(doc)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        # Race condition: another process inserted the same hash concurrently.
+        existing = source_repository.find_source_by_hash(db, body.visible_text_hash)
+        if existing:
+            return SourceDocumentStoreResult(
+                created=False,
+                source_document_id=existing.id,
+                duplicate=True,
+            )
+        raise
+    db.refresh(doc)
+    log.info("New source document stored: id=%s url=%s", doc.id, body.url)
+    return SourceDocumentStoreResult(
+        created=True,
+        source_document_id=doc.id,
+        duplicate=False,
+    )
+

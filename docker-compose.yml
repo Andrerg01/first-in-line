@@ -53,6 +53,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-local}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SEARCH_PROVIDER: ${SEARCH_PROVIDER:-duckduckgo}
     ports:
       - "9000:9000"
 
@@ -64,13 +65,16 @@ services:
       APP_ENV: ${APP_ENV:-local}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/grand_openings}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp-server:9000}
+      BACKEND_API_URL: ${BACKEND_API_URL:-http://backend-api:8000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       postgres:
         condition: service_healthy
       mcp-server:
         condition: service_started
-    command: ["python", "-m", "app.cli", "noop"]
+      backend-api:
+        condition: service_started
+    command: ["python", "-m", "worker.app.cli", "noop"]
 
 volumes:
   postgres_data:

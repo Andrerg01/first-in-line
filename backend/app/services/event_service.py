@@ -126,3 +126,35 @@ def patch_event_status(db: Session, event_id: uuid.UUID, new_status: str) -> Eve
     """
     event = get_event_detail(db, event_id)  # raises 404 if missing
     return event_repository.update_event_status(db, event, new_status)
+
+
+def list_review_queue(
+    db: Session,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[Event]:
+    """Return candidate and needs_review events ordered by created_at descending.
+
+    Args:
+        db: Active database session.
+        limit: Page size, capped at 200.
+        offset: Pagination offset.
+
+    Returns:
+        A list of ``Event`` instances awaiting review.
+    """
+    limit = min(limit, 200)
+    events: list[Event] = []
+    for status_val in ("candidate", "needs_review"):
+        events.extend(
+            event_repository.get_events(
+                db,
+                status=status_val,
+                limit=limit,
+                offset=offset,
+            )
+        )
+    # Sort merged list by created_at descending; repo already orders per-status.
+    events.sort(key=lambda e: e.created_at, reverse=True)
+    return events[:limit]
