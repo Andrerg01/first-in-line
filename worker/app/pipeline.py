@@ -1,4 +1,4 @@
-"""Worker pipeline — orchestrates a single scheduled discovery run.
+﻿"""Worker pipeline â€” orchestrates a single scheduled discovery run.
 
 Flow:
 1. Create a SearchRun record via the backend API.
@@ -14,8 +14,9 @@ Flow:
 from __future__ import annotations
 
 import logging
+import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from worker.app import api_client, mcp_client
 from worker.app.config import settings
@@ -23,6 +24,39 @@ from worker.app.search_queries import QUERY_SET_VERSION, get_queries
 from worker.app.url_utils import canonicalize_url, is_valid_http_url
 
 log = logging.getLogger(__name__)
+
+_DIVIDER = "â•" * 60
+_LOCATION = "Greenville, SC"
+
+
+def _fmt_elapsed(start: float) -> str:
+    """Return elapsed wall-clock time as a [MM:SS] tag."""
+    m, s = divmod(int(time.monotonic() - start), 60)
+    return f"[{m:02d}:{s:02d}]"
+
+
+def _eta(fetch_start: float, done: int, total: int) -> str:
+    """Estimate remaining time for the fetch phase.
+
+    Args:
+        fetch_start: Monotonic time when the fetch phase began.
+        done: Number of URLs already processed.
+        total: Total URLs to process.
+
+    Returns:
+        Human-readable ETA string, e.g. ``ETA ~02:14``.
+    """
+    if done == 0:
+        return "ETA estimating..."
+    elapsed = time.monotonic() - fetch_start
+    remaining = max(0, (total - done) * elapsed / done)
+    m, s = divmod(int(remaining), 60)
+    return f"ETA ~{m:02d}:{s:02d}"
+
+
+def _p(msg: str = "") -> None:
+    """Print a progress line to stdout immediately."""
+    print(msg, flush=True)
 
 
 @dataclass
@@ -38,6 +72,7 @@ class RunSummary:
     fetch_errors: int = 0
     final_status: str = "completed"
     notes: str = ""
+    elapsed_seconds: float = 0.0
 
 
 def run_once(*, dry_run: bool = False) -> RunSummary:
@@ -49,6 +84,15 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
     Returns:
         A ``RunSummary`` describing what was done.
     """
+    start = time.monotonic()
+    queries = get_queries()
+
+    _p(_DIVIDER)
+    _p("  Grand Opening Radar â€” Discovery Run")
+    _p(f"  Location : {_LOCATION}")
+    _p(f"  Queries  : {len(queries)}  Â·  URL cap: {settings.max_urls_per_run}  Â·  Dry run: {'Yes' if dry_run else 'No'}")
+    _p(_DIVIDER)
+
     log.info("Starting discovery run (dry_run=%s)", dry_run)
 
     # ------------------------------------------------------------------
@@ -67,7 +111,7 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
     log.info("SearchRun created: id=%s", run_id)
 
     try:
-        _execute_run(summary, dry_run=dry_run)
+        _execute_run(summary, dry_run=dry_run, start=start, queries=queries)
     except Exception as exc:  # noqa: BLE001
         log.error("Discovery run failed with unexpected error: %s", exc, exc_info=True)
         summary.final_status = "failed"
@@ -86,6 +130,8 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
         except Exception as exc:  # noqa: BLE001
             log.error("Failed to close SearchRun %s: %s", run_id, exc)
 
+    summary.elapsed_seconds = time.monotonic() - start
+
     log.info(
         "Run %s complete: status=%s queries=%d results=%d urls=%d created=%d skipped=%d errors=%d",
         run_id,
@@ -100,25 +146,38 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
     return summary
 
 
-def _execute_run(summary: RunSummary, *, dry_run: bool) -> None:
-    """Inner run logic — modifies summary in place.
+def _execute_run(
+    summary: RunSummary,
+    *,
+    dry_run: bool,
+    start: float,
+    queries: list[str],
+) -> None:
+    """Inner run logic â€” modifies summary in place.
 
     Args:
         summary: RunSummary to update with counts and status.
         dry_run: Skip actual API/MCP calls when True.
+        start: Monotonic start time used for elapsed-time formatting.
+        queries: Search query strings to execute.
     """
-    queries = get_queries()
     seen_canonical: set[str] = set()
-    ordered_urls: list[tuple[str, dict]] = []  # (canonical_url, result_dict)
+    ordered_urls: list[tuple[str, dict]] = []  # (canonical_url, meta)
+    n_queries = len(queries)
+    w = len(str(n_queries))  # width for zero-padded query index
 
     # ------------------------------------------------------------------
     # 2. Search phase
     # ------------------------------------------------------------------
-    for query in queries:
+    _p(f"\n{_fmt_elapsed(start)} SEARCH â€” {n_queries} queries")
+
+    for i, query in enumerate(queries, start=1):
+        _p(f"{_fmt_elapsed(start)} â”Œâ”€ Query {i:{w}d}/{n_queries}: {query!r}")
         log.info("Searching: %r", query)
         summary.queries_executed += 1
 
         if dry_run:
+            _p(f"{_fmt_elapsed(start)} â””â”€ [dry run] skipped")
             log.info("[dry_run] would call MCP web.search for %r", query)
             continue
 
@@ -126,9 +185,11 @@ def _execute_run(summary: RunSummary, *, dry_run: bool) -> None:
             resp = mcp_client.search(query, max_results=settings.max_results_per_query)
         except Exception as exc:  # noqa: BLE001
             log.warning("Search failed for %r: %s", query, exc)
+            _p(f"{_fmt_elapsed(start)} â””â”€ âœ— ERROR  {exc}")
             continue
 
         result_dicts: list[dict] = []
+        new_this_query = 0
         for item in resp.results:
             if not is_valid_http_url(item.url):
                 continue
@@ -146,6 +207,7 @@ def _execute_run(summary: RunSummary, *, dry_run: bool) -> None:
             if canonical not in seen_canonical:
                 seen_canonical.add(canonical)
                 ordered_urls.append((canonical, {"url": item.url, "title": item.title}))
+                new_this_query += 1
 
         if result_dicts:
             try:
@@ -155,19 +217,46 @@ def _execute_run(summary: RunSummary, *, dry_run: bool) -> None:
             except Exception as exc:  # noqa: BLE001
                 log.warning("Failed to save results for %r: %s", query, exc)
 
+        _p(
+            f"{_fmt_elapsed(start)} â””â”€ â†’ {len(result_dicts)} results"
+            f"  (+{new_this_query} new unique Â· {len(seen_canonical)} total unique)"
+        )
+
+    _p(
+        f"\n{_fmt_elapsed(start)} Search done: "
+        f"{summary.search_results_found} results Â· {len(seen_canonical)} unique URLs"
+    )
+
     # ------------------------------------------------------------------
     # 3 & 4. Fetch phase
     # ------------------------------------------------------------------
     cap = settings.max_urls_per_run
     to_fetch = ordered_urls[:cap]
-    log.info("Fetching %d unique URLs (cap=%d)", len(to_fetch), cap)
+    n_to_fetch = len(to_fetch)
+    uw = len(str(n_to_fetch)) if n_to_fetch else 1
 
-    for canonical_url, meta in to_fetch:
-        fetch_url = meta["url"]  # original URL with any UTM params, etc.
+    _p(f"\n{_fmt_elapsed(start)} FETCH â€” {n_to_fetch} URLs (cap: {cap})")
+
+    if n_to_fetch == 0:
+        _p(f"{_fmt_elapsed(start)} Nothing to fetch.")
+        return
+
+    fetch_start = time.monotonic()
+
+    for idx, (canonical_url, meta) in enumerate(to_fetch, start=1):
+        fetch_url = meta["url"]
+        title_preview = (meta.get("title") or "")[:70]
         summary.urls_attempted += 1
+        eta_str = _eta(fetch_start, idx - 1, n_to_fetch)
+
+        _p(f"{_fmt_elapsed(start)} â”Œâ”€ URL {idx:{uw}d}/{n_to_fetch}  [{eta_str}]")
+        _p(f"              {fetch_url[:90]}")
+        if title_preview:
+            _p(f"              {title_preview}")
         log.info("Fetching: %s", fetch_url)
 
         if dry_run:
+            _p(f"{_fmt_elapsed(start)} â””â”€ [dry run] skipped")
             log.info("[dry_run] would fetch %s", fetch_url)
             continue
 
@@ -176,6 +265,8 @@ def _execute_run(summary: RunSummary, *, dry_run: bool) -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("Fetch error for %s: %s", fetch_url, exc)
             summary.fetch_errors += 1
+            _p(f"{_fmt_elapsed(start)} â””â”€ âœ— FETCH ERROR  {exc}")
+            _p(_running_totals(summary))
             continue
 
         if fetch_resp.fetch_status != "success" or not fetch_resp.visible_text:
@@ -184,6 +275,9 @@ def _execute_run(summary: RunSummary, *, dry_run: bool) -> None:
                 fetch_url, fetch_resp.fetch_status, fetch_resp.error_message,
             )
             summary.fetch_errors += 1
+            detail = fetch_resp.error_message or fetch_resp.fetch_status
+            _p(f"{_fmt_elapsed(start)} â””â”€ âœ— {fetch_resp.fetch_status.upper()}  {detail}")
+            _p(_running_totals(summary))
             continue
 
         try:
@@ -191,6 +285,8 @@ def _execute_run(summary: RunSummary, *, dry_run: bool) -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("Normalize error for %s: %s", fetch_url, exc)
             summary.fetch_errors += 1
+            _p(f"{_fmt_elapsed(start)} â””â”€ âœ— NORMALIZE ERROR  {exc}")
+            _p(_running_totals(summary))
             continue
 
         try:
@@ -210,16 +306,34 @@ def _execute_run(summary: RunSummary, *, dry_run: bool) -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("Store error for %s: %s", fetch_url, exc)
             summary.fetch_errors += 1
+            _p(f"{_fmt_elapsed(start)} â””â”€ âœ— STORE ERROR  {exc}")
+            _p(_running_totals(summary))
             continue
 
         if store_result.created:
             summary.source_docs_created += 1
+            short_hash = (norm_resp.text_hash or "")[:8]
             log.info("New source doc stored: id=%s url=%s", store_result.source_document_id, fetch_url)
+            _p(f"{_fmt_elapsed(start)} â””â”€ âœ“ NEW    hash:{short_hash}")
         else:
             summary.source_docs_skipped += 1
             log.info("Duplicate skipped: id=%s url=%s", store_result.source_document_id, fetch_url)
+            _p(f"{_fmt_elapsed(start)} â””â”€ â†© SKIP   already in database")
+
+        _p(_running_totals(summary))
 
     if summary.fetch_errors > 0 and summary.source_docs_created == 0:
         summary.final_status = "partial"
     else:
         summary.final_status = "completed"
+
+
+def _running_totals(summary: RunSummary) -> str:
+    """Format a compact running-totals line for display during the fetch phase."""
+    return (
+        f"              "
+        f"new: {summary.source_docs_created}  "
+        f"skipped: {summary.source_docs_skipped}  "
+        f"errors: {summary.fetch_errors}"
+    )
+
