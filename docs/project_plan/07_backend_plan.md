@@ -104,6 +104,9 @@ POST /api/admin/events/{event_id}/verify
 POST /api/admin/events/{event_id}/reject
 POST /api/admin/events/{event_id}/mark-needs-review
 POST /api/admin/events/{event_id}/merge
+GET /api/admin/events/{event_id}/conflicts?other_id={event_id}
+POST /api/admin/events/{event_id}/flag-duplicate
+POST /api/admin/dedup/retroactive-run
 ```
 
 ## Suggested Backend Modules

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -13,14 +14,18 @@ from app.models.events import Event
 # ---------------------------------------------------------------------------
 
 
-def _create_event(db, status: str = "candidate", business_name: str = "Test Biz") -> Event:
+def _create_event(
+    db,
+    status: str = "candidate",
+    business_name: str = "Test Biz",
+    **kwargs,
+) -> Event:
     """Insert a minimal event directly into the test DB."""
-    from datetime import datetime, timezone
-
     event = Event(
         business_name=business_name,
         event_type="grand_opening",
         status=status,
+        **kwargs,
     )
     db.add(event)
     db.commit()
@@ -88,6 +93,57 @@ class TestReviewQueue:
         resp = test_client.get("/api/admin/review-queue?limit=2")
         assert resp.status_code == 200
         assert len(resp.json()) <= 2
+
+    def test_offset_applies_to_global_mixed_status_order(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        base = datetime.now(timezone.utc)
+        newest = _create_event(
+            db,
+            status="needs_review",
+            business_name="Newest Review",
+            created_at=base,
+        )
+        middle = _create_event(
+            db,
+            status="candidate",
+            business_name="Middle Candidate",
+            created_at=base - timedelta(minutes=1),
+        )
+        _oldest = _create_event(
+            db,
+            status="needs_review",
+            business_name="Oldest Review",
+            created_at=base - timedelta(minutes=2),
+        )
+
+        resp = test_client.get("/api/admin/review-queue?limit=1&offset=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["id"] == str(middle.id)
+
+    def test_same_timestamp_rows_page_without_overlap(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for index in range(3):
+            _create_event(
+                db,
+                status="candidate",
+                business_name=f"Same Stamp {index}",
+                created_at=stamp,
+            )
+
+        page1 = test_client.get("/api/admin/review-queue?limit=2&offset=0")
+        page2 = test_client.get("/api/admin/review-queue?limit=2&offset=2")
+        assert page1.status_code == 200
+        assert page2.status_code == 200
+        ids1 = {row["id"] for row in page1.json()}
+        ids2 = {row["id"] for row in page2.json()}
+        assert ids1.isdisjoint(ids2)
 
 
 # ---------------------------------------------------------------------------
@@ -218,3 +274,272 @@ class TestSourceDocumentEndpoint:
         assert resp1.json()["source_document_id"] != resp2.json()["source_document_id"]
         assert resp1.json()["created"] is True
         assert resp2.json()["created"] is True
+
+
+# ---------------------------------------------------------------------------
+# Dedup admin endpoints tests
+# ---------------------------------------------------------------------------
+
+
+class TestAdminDedupEndpoints:
+    """Integration tests for conflict, duplicate flag, and merge endpoints."""
+
+    def test_flag_duplicate_sets_fields(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        source = _create_event(db, status="candidate", business_name="Source")
+        target = _create_event(db, status="verified", business_name="Target")
+
+        resp = test_client.post(
+            f"/api/admin/events/{source.id}/flag-duplicate",
+            json={"duplicate_of_id": str(target.id)},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["possible_duplicate"] is True
+        assert data["duplicate_of_id"] == str(target.id)
+
+    def test_flag_duplicate_clear_unsets_fields(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        source = _create_event(db, status="candidate", business_name="Source")
+        target = _create_event(db, status="verified", business_name="Target")
+
+        set_resp = test_client.post(
+            f"/api/admin/events/{source.id}/flag-duplicate",
+            json={"duplicate_of_id": str(target.id)},
+        )
+        assert set_resp.status_code == 200
+
+        clear_resp = test_client.post(
+            f"/api/admin/events/{source.id}/flag-duplicate",
+            json={"duplicate_of_id": None},
+        )
+        assert clear_resp.status_code == 200
+        data = clear_resp.json()
+        assert data["possible_duplicate"] is False
+        assert data["duplicate_of_id"] is None
+
+    def test_flag_duplicate_same_event_id_returns_422(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        event = _create_event(db, status="candidate", business_name="Same")
+
+        resp = test_client.post(
+            f"/api/admin/events/{event.id}/flag-duplicate",
+            json={"duplicate_of_id": str(event.id)},
+        )
+        assert resp.status_code == 422
+
+    def test_conflicts_endpoint_returns_claim_differences(self, test_client):
+        from app.db import get_db
+        from app.models.claims import EventClaim
+        from app.models.sources import SourceDocument
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        a = _create_event(db, status="candidate", business_name="Alpha")
+        b = _create_event(db, status="verified", business_name="Beta")
+
+        source_doc = SourceDocument(
+            id=uuid.uuid4(),
+            url="https://example.com/conflict",
+            fetch_status="success",
+        )
+        db.add(source_doc)
+        db.flush()
+
+        db.add(
+            EventClaim(
+                id=uuid.uuid4(),
+                event_id=a.id,
+                source_document_id=source_doc.id,
+                claim_type="event_date",
+                claim_value="2026-06-01",
+            )
+        )
+        db.add(
+            EventClaim(
+                id=uuid.uuid4(),
+                event_id=b.id,
+                source_document_id=source_doc.id,
+                claim_type="event_date",
+                claim_value="2026-07-01",
+            )
+        )
+        db.commit()
+
+        resp = test_client.get(
+            f"/api/admin/events/{a.id}/conflicts?other_id={b.id}"
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "event_date" in data["conflicting_claim_types"]
+        assert data["event_a"]["id"] == str(a.id)
+        assert data["event_b"]["id"] == str(b.id)
+
+    def test_merge_endpoint_marks_source_and_keeps_target(self, test_client):
+        from app.db import get_db
+        from app.models.sources import SourceDocument, EventSource
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        source = _create_event(db, status="candidate", business_name="Source Name")
+        target = _create_event(db, status="verified", business_name="Target Name")
+
+        source_doc = SourceDocument(
+            id=uuid.uuid4(),
+            url="https://example.com/source",
+            fetch_status="success",
+        )
+        target_doc = SourceDocument(
+            id=uuid.uuid4(),
+            url="https://example.com/target",
+            fetch_status="success",
+        )
+        db.add(source_doc)
+        db.add(target_doc)
+        db.flush()
+        db.add(EventSource(event_id=source.id, source_document_id=source_doc.id))
+        db.add(EventSource(event_id=target.id, source_document_id=target_doc.id))
+        db.commit()
+
+        resp = test_client.post(
+            f"/api/admin/events/{source.id}/merge",
+            json={
+                "target_id": str(target.id),
+                "canonical_fields": {"business_name": "Canonical Name"},
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["id"] == str(target.id)
+        assert data["business_name"] == "Canonical Name"
+
+        # Confirm source got merged state via existing event detail endpoint
+        source_after = test_client.get(f"/api/events/{source.id}")
+        assert source_after.status_code == 200
+        assert source_after.json()["status"] == "merged"
+
+        target_sources = test_client.get(f"/api/events/{target.id}/sources")
+        assert target_sources.status_code == 200
+        urls = {row["source_document"]["url"] for row in target_sources.json()}
+        assert urls == {"https://example.com/source", "https://example.com/target"}
+
+    def test_merge_endpoint_dedupes_shared_source_links(self, test_client):
+        from app.db import get_db
+        from app.models.sources import EventSource, SourceDocument
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        source = _create_event(db, status="candidate", business_name="Source Name")
+        target = _create_event(db, status="verified", business_name="Target Name")
+
+        shared_doc = SourceDocument(
+            id=uuid.uuid4(),
+            url="https://example.com/shared",
+            fetch_status="success",
+        )
+        db.add(shared_doc)
+        db.flush()
+        db.add(EventSource(event_id=source.id, source_document_id=shared_doc.id))
+        db.add(EventSource(event_id=target.id, source_document_id=shared_doc.id))
+        db.commit()
+
+        resp = test_client.post(
+            f"/api/admin/events/{source.id}/merge",
+            json={"target_id": str(target.id), "canonical_fields": {}},
+        )
+        assert resp.status_code == 200
+
+        target_sources = test_client.get(f"/api/events/{target.id}/sources")
+        assert target_sources.status_code == 200
+        urls = [row["source_document"]["url"] for row in target_sources.json()]
+        assert urls == ["https://example.com/shared"]
+
+    def test_merge_clears_possible_duplicate_on_source(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        source = _create_event(db, status="candidate", business_name="Source Name")
+        target = _create_event(db, status="verified", business_name="Target Name")
+
+        flag_resp = test_client.post(
+            f"/api/admin/events/{source.id}/flag-duplicate",
+            json={"duplicate_of_id": str(target.id)},
+        )
+        assert flag_resp.status_code == 200
+
+        merge_resp = test_client.post(
+            f"/api/admin/events/{source.id}/merge",
+            json={"target_id": str(target.id), "canonical_fields": {}},
+        )
+        assert merge_resp.status_code == 200
+
+        source_after = test_client.get(f"/api/events/{source.id}")
+        assert source_after.status_code == 200
+        assert source_after.json()["possible_duplicate"] is False
+
+    def test_retroactive_dedup_flags_existing_duplicates(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        older = _create_event(
+            db,
+            status="verified",
+            business_name="Enlo Restaurant",
+            city="Greenville",
+            state="SC",
+            address="123 Main St",
+            event_date=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        newer = _create_event(
+            db,
+            status="candidate",
+            business_name="Enlo",
+            city="Greenville",
+            state="SC",
+            address="123 Main Street",
+            event_date=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
+
+        resp = test_client.post("/api/admin/dedup/retroactive-run")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["scanned"] >= 2
+        assert data["flagged"] >= 1
+
+        newer_after = test_client.get(f"/api/events/{newer.id}")
+        assert newer_after.status_code == 200
+        assert newer_after.json()["possible_duplicate"] is True
+        assert newer_after.json()["duplicate_of_id"] == str(older.id)
+
+    def test_merge_endpoint_same_source_target_422(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        ev = _create_event(db, status="candidate", business_name="Same")
+
+        resp = test_client.post(
+            f"/api/admin/events/{ev.id}/merge",
+            json={"target_id": str(ev.id), "canonical_fields": {}},
+        )
+        assert resp.status_code == 422
+
+    def test_merge_endpoint_invalid_canonical_field_type_422(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        source = _create_event(db, status="candidate", business_name="Source")
+        target = _create_event(db, status="verified", business_name="Target")
+
+        resp = test_client.post(
+            f"/api/admin/events/{source.id}/merge",
+            json={
+                "target_id": str(target.id),
+                "canonical_fields": {"event_date": "not-a-date"},
+            },
+        )
+        assert resp.status_code == 422

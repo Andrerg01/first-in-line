@@ -112,6 +112,7 @@ Features:
 * show possible duplicates
 * verify/reject/merge
 * show conflicts
+* run retroactive duplicate scan on demand
 
 ## UI Status Labels
 

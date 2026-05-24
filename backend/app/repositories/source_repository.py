@@ -159,3 +159,35 @@ def create_event_source(
     db.add(link)
     db.flush()
     return link
+
+
+def reassign_event_source(
+    db: Session,
+    link: EventSource,
+    *,
+    new_event_id: uuid.UUID,
+) -> EventSource:
+    """Move an existing event-source link to a different event.
+
+    Args:
+        db: Active database session.
+        link: Existing ``EventSource`` row to update.
+        new_event_id: Event UUID to reassign the link to.
+
+    Returns:
+        The updated ``EventSource``.
+    """
+    link.event_id = new_event_id
+    db.flush()
+    return link
+
+
+def delete_event_source(db: Session, link: EventSource) -> None:
+    """Delete an event-source link.
+
+    Args:
+        db: Active database session.
+        link: Existing ``EventSource`` row to delete.
+    """
+    db.delete(link)
+    db.flush()
