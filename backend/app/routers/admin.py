@@ -108,7 +108,7 @@ def flag_event_as_duplicate(
         )
     except ValueError as exc:
         detail = str(exc)
-        status_code = 422 if "must differ" in detail else 404
+        status_code = 422 if "must differ" in detail or "not a canonical root" in detail else 404
         raise HTTPException(status_code=status_code, detail=detail) from exc
 
     db.commit()
@@ -151,7 +151,7 @@ def merge_events(
         )
     except ValueError as exc:
         detail = str(exc)
-        status_code = 422 if "must differ" in detail else 404
+        status_code = 422 if "must differ" in detail or "not a canonical root" in detail else 404
         raise HTTPException(status_code=status_code, detail=detail) from exc
 
     db.commit()

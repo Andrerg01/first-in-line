@@ -334,6 +334,26 @@ class TestAdminDedupEndpoints:
         )
         assert resp.status_code == 422
 
+    def test_flag_duplicate_non_root_target_returns_422(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        canonical = _create_event(db, status="verified", business_name="Canonical")
+        non_root_target = _create_event(
+            db,
+            status="candidate",
+            business_name="Non Root",
+            possible_duplicate=True,
+            duplicate_of_id=canonical.id,
+        )
+        source = _create_event(db, status="candidate", business_name="Source")
+
+        resp = test_client.post(
+            f"/api/admin/events/{source.id}/flag-duplicate",
+            json={"duplicate_of_id": str(non_root_target.id)},
+        )
+        assert resp.status_code == 422
+
     def test_conflicts_endpoint_returns_claim_differences(self, test_client):
         from app.db import get_db
         from app.models.claims import EventClaim
@@ -480,6 +500,57 @@ class TestAdminDedupEndpoints:
         assert source_after.status_code == 200
         assert source_after.json()["possible_duplicate"] is False
 
+    def test_merge_repoints_duplicate_children_to_target(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        target = _create_event(db, status="verified", business_name="Target Name")
+        source = _create_event(
+            db,
+            status="candidate",
+            business_name="Source Name",
+            possible_duplicate=True,
+            duplicate_of_id=target.id,
+        )
+        child = _create_event(
+            db,
+            status="candidate",
+            business_name="Child Name",
+            possible_duplicate=True,
+            duplicate_of_id=source.id,
+        )
+
+        merge_resp = test_client.post(
+            f"/api/admin/events/{source.id}/merge",
+            json={"target_id": str(target.id), "canonical_fields": {}},
+        )
+        assert merge_resp.status_code == 200
+
+        child_after = test_client.get(f"/api/events/{child.id}")
+        assert child_after.status_code == 200
+        assert child_after.json()["possible_duplicate"] is True
+        assert child_after.json()["duplicate_of_id"] == str(target.id)
+
+    def test_merge_endpoint_non_root_target_422(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        canonical = _create_event(db, status="verified", business_name="Canonical")
+        non_root_target = _create_event(
+            db,
+            status="candidate",
+            business_name="Non Root",
+            possible_duplicate=True,
+            duplicate_of_id=canonical.id,
+        )
+        source = _create_event(db, status="candidate", business_name="Source")
+
+        resp = test_client.post(
+            f"/api/admin/events/{source.id}/merge",
+            json={"target_id": str(non_root_target.id), "canonical_fields": {}},
+        )
+        assert resp.status_code == 422
+
     def test_retroactive_dedup_flags_existing_duplicates(self, test_client):
         from app.db import get_db
 
@@ -515,6 +586,55 @@ class TestAdminDedupEndpoints:
         assert newer_after.status_code == 200
         assert newer_after.json()["possible_duplicate"] is True
         assert newer_after.json()["duplicate_of_id"] == str(older.id)
+
+    def test_retroactive_dedup_points_cluster_to_canonical_root(self, test_client):
+        from app.db import get_db
+
+        db = next(test_client.app.dependency_overrides[get_db]())
+        canonical = _create_event(
+            db,
+            status="verified",
+            business_name="Enlo Restaurant",
+            city="Greenville",
+            state="SC",
+            address="123 Main St",
+            event_date=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        first_duplicate = _create_event(
+            db,
+            status="candidate",
+            business_name="Enlo",
+            city="Greenville",
+            state="SC",
+            address="123 Main Street",
+            event_date=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            possible_duplicate=True,
+            duplicate_of_id=canonical.id,
+        )
+        newer_duplicate = _create_event(
+            db,
+            status="candidate",
+            business_name="Enlo Cafe",
+            city="Greenville",
+            state="SC",
+            address="123 Main Street",
+            event_date=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 3, tzinfo=timezone.utc),
+        )
+
+        resp = test_client.post("/api/admin/dedup/retroactive-run")
+        assert resp.status_code == 200
+
+        first_duplicate_after = test_client.get(f"/api/events/{first_duplicate.id}")
+        assert first_duplicate_after.status_code == 200
+        assert first_duplicate_after.json()["duplicate_of_id"] == str(canonical.id)
+
+        newer_after = test_client.get(f"/api/events/{newer_duplicate.id}")
+        assert newer_after.status_code == 200
+        assert newer_after.json()["possible_duplicate"] is True
+        assert newer_after.json()["duplicate_of_id"] == str(canonical.id)
 
     def test_merge_endpoint_same_source_target_422(self, test_client):
         from app.db import get_db

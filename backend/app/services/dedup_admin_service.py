@@ -24,6 +24,29 @@ def _best_match(event: Event, candidates: list[Event]) -> SimilarityResult | Non
     return max((score_pair(event, candidate) for candidate in candidates), key=lambda item: item.score)
 
 
+def _canonical_candidates(candidates: list[Event]) -> list[Event]:
+    """Return only candidate rows that still represent canonical records."""
+    return [candidate for candidate in candidates if candidate.duplicate_of_id is None]
+
+
+def _ensure_canonical_target(event: Event, *, label: str) -> Event:
+    """Validate that a selected duplicate target is a canonical root.
+
+    Args:
+        event: Event chosen as the canonical target.
+        label: Human-readable role name used in the error message.
+
+    Returns:
+        The validated ``Event``.
+
+    Raises:
+        ValueError: If the event already points at another canonical record.
+    """
+    if event.duplicate_of_id is not None:
+        raise ValueError(f"{label} {event.id} is not a canonical root.")
+    return event
+
+
 def check_and_flag_duplicate(
     db: Session,
     event: Event,
@@ -43,7 +66,7 @@ def check_and_flag_duplicate(
         state=event.state,
         exclude_id=event.id,
     )
-    best = _best_match(event, candidates)
+    best = _best_match(event, _canonical_candidates(candidates))
     if best is not None and best.score >= threshold:
         dedup_repository.set_duplicate_flag(db, event, duplicate_of_id=best.event_id)
         return best
@@ -95,6 +118,7 @@ def merge_events(
         raise ValueError(f"Source event {source_id} not found.")
     if target is None:
         raise ValueError(f"Target event {target_id} not found.")
+    _ensure_canonical_target(target, label="Target event")
 
     for field, value in canonical_fields.items():
         setattr(target, field, value)
@@ -110,6 +134,10 @@ def merge_events(
             source_repository.delete_event_source(db, link)
             continue
         source_repository.reassign_event_source(db, link, new_event_id=target.id)
+
+    for dependent in event_repository.list_events_pointing_to_duplicate_target(db, source.id):
+        dependent.duplicate_of_id = target.id
+        dependent.possible_duplicate = True
 
     source.status = "merged"
     source.duplicate_of_id = target_id
@@ -135,6 +163,7 @@ def flag_duplicate(
         canonical = event_repository.get_event_by_id(db, duplicate_of_id)
         if canonical is None:
             raise ValueError(f"Canonical event {duplicate_of_id} not found.")
+        _ensure_canonical_target(canonical, label="Canonical event")
     dedup_repository.set_duplicate_flag(db, event, duplicate_of_id=duplicate_of_id)
     return event
 
@@ -161,7 +190,7 @@ def run_retroactive_scan(
         prior_events = [
             candidate
             for candidate in events[:index]
-            if is_location_match(event, candidate)
+            if candidate.duplicate_of_id is None and is_location_match(event, candidate)
         ]
 
         best = _best_match(event, prior_events)

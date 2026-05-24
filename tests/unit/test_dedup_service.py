@@ -16,6 +16,7 @@ from app.services.dedup_service import (
     _date_similarity,
     _name_similarity,
     check_and_flag_duplicate,
+    flag_duplicate,
     get_conflicts,
     merge_events,
     normalize_business_name,
@@ -318,6 +319,72 @@ class TestMergeEvents:
                 canonical_fields={},
             )
 
+    def test_merge_repoints_duplicate_children_to_target(self, db_session):
+        canonical = _event(db_session, business_name="Canonical", status="verified")
+        source = _event(
+            db_session,
+            business_name="Source",
+            status="candidate",
+            possible_duplicate=True,
+            duplicate_of_id=canonical.id,
+        )
+        child = _event(
+            db_session,
+            business_name="Child",
+            status="candidate",
+            possible_duplicate=True,
+            duplicate_of_id=source.id,
+        )
+
+        merge_events(
+            db_session,
+            source_id=source.id,
+            target_id=canonical.id,
+            canonical_fields={},
+        )
+
+        assert child.possible_duplicate is True
+        assert child.duplicate_of_id == canonical.id
+
+    def test_merge_raises_when_target_is_not_canonical_root(self, db_session):
+        canonical = _event(db_session, business_name="Canonical", status="verified")
+        non_root_target = _event(
+            db_session,
+            business_name="Non Root",
+            status="candidate",
+            possible_duplicate=True,
+            duplicate_of_id=canonical.id,
+        )
+        source = _event(db_session, business_name="Source", status="candidate")
+
+        with pytest.raises(ValueError, match="not a canonical root"):
+            merge_events(
+                db_session,
+                source_id=source.id,
+                target_id=non_root_target.id,
+                canonical_fields={},
+            )
+
+
+class TestFlagDuplicate:
+    def test_raises_when_target_is_not_canonical_root(self, db_session):
+        canonical = _event(db_session, business_name="Canonical", status="verified")
+        non_root_target = _event(
+            db_session,
+            business_name="Non Root",
+            status="candidate",
+            possible_duplicate=True,
+            duplicate_of_id=canonical.id,
+        )
+        source = _event(db_session, business_name="Source", status="candidate")
+
+        with pytest.raises(ValueError, match="not a canonical root"):
+            flag_duplicate(
+                db_session,
+                event_id=source.id,
+                duplicate_of_id=non_root_target.id,
+            )
+
 
 # ---------------------------------------------------------------------------
 # get_conflicts
@@ -419,6 +486,47 @@ class TestRunRetroactiveScan:
         assert result["flagged"] >= 1
         assert newer.possible_duplicate is True
         assert newer.duplicate_of_id == older.id
+
+    def test_points_new_duplicate_to_canonical_root_in_cluster(self, db_session):
+        canonical = _event(
+            db_session,
+            business_name="Enlo Restaurant",
+            city="Greenville",
+            state="SC",
+            address="123 Main St",
+            event_date=_DT,
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            status="verified",
+        )
+        first_duplicate = _event(
+            db_session,
+            business_name="Enlo",
+            city="Greenville",
+            state="SC",
+            address="123 Main Street",
+            event_date=_DT,
+            created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            status="candidate",
+            possible_duplicate=True,
+            duplicate_of_id=canonical.id,
+        )
+        newer_duplicate = _event(
+            db_session,
+            business_name="Enlo Cafe",
+            city="Greenville",
+            state="SC",
+            address="123 Main Street",
+            event_date=_DT,
+            created_at=datetime(2026, 1, 3, tzinfo=timezone.utc),
+            status="candidate",
+        )
+
+        result = run_retroactive_scan(db_session)
+
+        assert result["scanned"] >= 3
+        assert newer_duplicate.possible_duplicate is True
+        assert newer_duplicate.duplicate_of_id == canonical.id
+        assert first_duplicate.duplicate_of_id == canonical.id
 
     def test_clears_stale_duplicate_flag_when_no_match(self, db_session):
         event = _event(

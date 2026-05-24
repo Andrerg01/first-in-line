@@ -37,7 +37,11 @@ def find_candidates_by_city_state(
     Returns:
         A list of ``Event`` instances that could be duplicates.
     """
-    stmt = select(Event).where(Event.id != exclude_id, Event.status.in_(statuses))
+    stmt = select(Event).where(
+        Event.id != exclude_id,
+        Event.status.in_(statuses),
+        Event.duplicate_of_id.is_(None),
+    )
     city = normalize_location_value(city)
     state = normalize_location_value(state)
     if city:

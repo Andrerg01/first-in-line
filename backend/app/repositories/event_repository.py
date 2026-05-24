@@ -126,3 +126,20 @@ def get_review_queue_events(
         .offset(offset)
     )
     return list(db.scalars(stmt).all())
+
+
+def list_events_pointing_to_duplicate_target(
+    db: Session,
+    duplicate_of_id: uuid.UUID,
+) -> list[Event]:
+    """Return events currently pointing at the supplied duplicate target.
+
+    Args:
+        db: Active database session.
+        duplicate_of_id: Duplicate target to match.
+
+    Returns:
+        A list of ``Event`` instances whose ``duplicate_of_id`` matches.
+    """
+    stmt = select(Event).where(Event.duplicate_of_id == duplicate_of_id)
+    return list(db.scalars(stmt).all())
