@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Numeric, String, Text
@@ -36,7 +37,7 @@ class LLMCall(Base):
     prompt_tokens: Mapped[int | None] = mapped_column(nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(nullable=True)
-    cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="success"

@@ -23,6 +23,7 @@ from __future__ import annotations
 import functools
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 from openai import OpenAI
 
 from worker.app.extraction.nodes import (
@@ -41,7 +42,7 @@ def build_extraction_graph(
     openai_api_key: str,
     classify_model: str = "gpt-4o-mini",
     extract_model: str = "gpt-4o-mini",
-) -> "StateGraph":
+) -> CompiledStateGraph:
     """Construct and compile the LangGraph extraction graph.
 
     Node functions are wrapped with ``functools.partial`` to inject the

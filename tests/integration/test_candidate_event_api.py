@@ -14,7 +14,6 @@ import uuid
 import pytest
 
 from app.repositories import source_repository
-from app.schemas.ingest import LLMCallCreate
 
 
 # ---------------------------------------------------------------------------
@@ -234,3 +233,23 @@ class TestCreateCandidateEvent:
         queue = queue_resp.json()
         names = [e["business_name"] for e in queue]
         assert "Queue Burgers" in names
+
+
+class TestCandidateEventUnknownSourceDoc:
+    """Submitting to an unknown source_document_id must return 404."""
+
+    def test_unknown_source_doc_returns_404(self, test_client):
+        """POST to a non-existent source document should return HTTP 404."""
+        import uuid
+
+        unknown_id = str(uuid.uuid4())
+        resp = test_client.post(
+            f"/api/ingest/source-document/{unknown_id}/candidate",
+            json={
+                "business_name": "Ghost Cafe",
+                "event_type": "grand_opening",
+                "claims": [],
+                "llm_calls": [],
+            },
+        )
+        assert resp.status_code == 404

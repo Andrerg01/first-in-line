@@ -728,14 +728,17 @@ def store_source_document_from_fetch(
 
 
 def save_candidate_event(
-    db: Session, body: CandidateEventCreate
+    db: Session,
+    body: CandidateEventCreate,
+    *,
+    source_document_id: uuid.UUID,
 ) -> CandidateEventResult:
     """Persist a candidate event, its claims, and all LLM call records.
 
     Called by the worker after the LangGraph extraction pipeline produces
     an extraction result for a source document.  Idempotent: if the source
-    document already has a linked event the call returns with
-    ``duplicate=True`` and no new records are written.
+    document already has a linked event with the same business name the call
+    returns with ``duplicate=True`` and no new records are written.
 
     Atomic: all inserts (LLM calls, event, event_source, claims, processing
     decision) are committed together.  If any step fails the transaction is
@@ -744,27 +747,41 @@ def save_candidate_event(
     Args:
         db: Active database session.
         body: Validated ``CandidateEventCreate`` payload from the worker.
+        source_document_id: UUID of the source document being processed
+            (provided by the path parameter, not the request body).
 
     Returns:
         A ``CandidateEventResult`` describing the outcome.
     """
     # ------------------------------------------------------------------
-    # 1. Guard — skip if source document already linked to an event
+    # 0. Guard — verify the source document exists (404 before any writes)
     # ------------------------------------------------------------------
-    event_source_row = source_repository.get_event_source_for_source_document(
-        db, body.source_document_id
-    )
-    if event_source_row is not None:
-        log.info(
-            "save_candidate_event: source_doc %s already linked to event %s — skipping",
-            body.source_document_id,
-            event_source_row.event_id,
+    source_doc = source_repository.get_source_document_by_id(db, source_document_id)
+    if source_doc is None:
+        from fastapi import HTTPException  # local import to avoid module-level coupling
+        raise HTTPException(status_code=404, detail=f"SourceDocument {source_document_id} not found")
+
+    # ------------------------------------------------------------------
+    # 1. Guard — skip if (source_doc, business_name) already saved
+    #    Scoped to business_name so multiple events per source doc are
+    #    allowed (multi-event extraction path).
+    # ------------------------------------------------------------------
+    if body.business_name:
+        existing = source_repository.find_event_source_by_source_and_business(
+            db, source_document_id, body.business_name
         )
-        return CandidateEventResult(
-            event_id=event_source_row.event_id,
-            duplicate=True,
-            message="Source document already linked to an event.",
-        )
+        if existing is not None:
+            log.info(
+                "save_candidate_event: source_doc %s already has event %s for %r - skipping",
+                source_document_id,
+                existing.event_id,
+                body.business_name,
+            )
+            return CandidateEventResult(
+                event_id=existing.event_id,
+                duplicate=True,
+                message="Event already recorded for this source document and business name.",
+            )
 
     # ------------------------------------------------------------------
     # 2. Log all LLM calls (flush; do not commit yet)
@@ -783,7 +800,7 @@ def save_candidate_event(
     if not body.business_name and not body.claims:
         processing_repository.create_processing_decision(
             db,
-            source_document_id=body.source_document_id,
+            source_document_id=source_document_id,
             event_id=None,
             decision_type="worker_extraction",
             decision_value="irrelevant",
@@ -821,7 +838,7 @@ def save_candidate_event(
     # 5. Link source document → event
     # ------------------------------------------------------------------
     source_repository.create_event_source(
-        db, event_id=event.id, source_document_id=body.source_document_id
+        db, event_id=event.id, source_document_id=source_document_id
     )
 
     # ------------------------------------------------------------------
@@ -831,7 +848,7 @@ def save_candidate_event(
         claims_repository.create_claim(
             db,
             event_id=event.id,
-            source_document_id=body.source_document_id,
+            source_document_id=source_document_id,
             claim_type=claim.claim_type,
             claim_value=claim.claim_value,
             claim_text=claim.claim_text,
@@ -846,7 +863,7 @@ def save_candidate_event(
     extraction_call_id = llm_call_ids[-1] if llm_call_ids else None
     processing_repository.create_processing_decision(
         db,
-        source_document_id=body.source_document_id,
+        source_document_id=source_document_id,
         event_id=event.id,
         decision_type="worker_extraction",
         decision_value="candidate_created",
@@ -859,7 +876,7 @@ def save_candidate_event(
     log.info(
         "save_candidate_event: created event %s for source_doc %s",
         event.id,
-        body.source_document_id,
+        source_document_id,
     )
     return CandidateEventResult(
         event_id=event.id,

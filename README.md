@@ -11,7 +11,8 @@ Grand Opening Radar discovers nearby business grand openings and preserves sourc
 | 2 | Basic frontend — event list, event detail, admin verify/reject | ✅ Complete |
 | 3 | Manual URL ingestion — AdminIngest page, OpenAI extraction pipeline | ✅ Complete |
 | 4 | Scheduled worker — search → fetch → dedupe → telemetry pipeline | ✅ Complete |
-| 5+ | LangGraph orchestration, map/calendar, CI/CD, notifications | Planned |
+| 5 | LangGraph extraction pipeline — classify, extract, multi-event, LLM call logging | ✅ Complete |
+| 6+ | Deduplication/review, map/calendar, CI/CD, notifications | Planned |
 
 Current version: see `VERSION` file.
 
@@ -108,6 +109,10 @@ docker compose exec worker python -m worker.app.cli run --dry-run
 | `WORKER_REQUEST_TIMEOUT` | `30.0` | HTTP timeout for MCP/API calls (seconds) |
 | `WORKER_BACKOFF_BASE` | `1.0` | Exponential backoff base for retries |
 | `WORKER_MAX_RETRIES` | `3` | Max retries on transient failures |
+| `OPENAI_API_KEY` | _(none)_ | OpenAI API key; if unset, extraction phase is skipped |
+| `WORKER_CLASSIFY_MODEL` | `gpt-4o-mini` | Model used for relevance and count classification |
+| `WORKER_EXTRACT_MODEL` | `gpt-4o-mini` | Model used for event extraction |
+| `SCRAPER_LLM_PAGE_LIMIT` | `30` | Max pages to send through the LLM extraction pipeline per run |
 
 ## Pages
 

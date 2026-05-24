@@ -120,7 +120,8 @@ class CandidateEventCreate(BaseModel):
     records for every OpenAI API call made while processing this source doc.
     """
 
-    source_document_id: uuid.UUID
+    model_config = ConfigDict(extra="ignore")
+
     search_run_id: uuid.UUID | None = None
     business_name: str | None = None
     event_name: str | None = None

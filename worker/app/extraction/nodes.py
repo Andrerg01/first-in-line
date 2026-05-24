@@ -31,6 +31,8 @@ from worker.app.extraction.prompts import (
     EXTRACT_SINGLE_SYSTEM_PROMPT,
     RELEVANCE_SYSTEM_PROMPT,
 )
+from pydantic import BaseModel
+
 from worker.app.extraction.schemas import (
     EventCountResult,
     ExtractedEvent,
@@ -70,6 +72,7 @@ def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> fl
     """
     rates = _COST_PER_1M.get(model)
     if rates is None:
+        log.debug("_estimate_cost: no pricing data for model %r; returning 0.0", model)
         return 0.0
     input_rate, output_rate = rates
     return (prompt_tokens * input_rate + completion_tokens * output_rate) / 1_000_000
@@ -87,7 +90,7 @@ def _call_openai(
     model: str,
     system_prompt: str,
     user_content: str,
-    schema_class: type,
+    schema_class: type[BaseModel],
 ) -> tuple[Any, LLMCallData]:
     """Make a single structured OpenAI call and return (parsed_result, call_data).
 

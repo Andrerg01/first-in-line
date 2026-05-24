@@ -218,7 +218,11 @@ No LLM required for this phase
 
 ---
 
-## Phase 5 — LangGraph Extraction Workflow
+## Phase 5 — LangGraph Extraction Workflow ✅ COMPLETE
+
+## Status
+
+**Completed.** 198 tests passing. VERSION `0.6.0`.
 
 ## Goal
 

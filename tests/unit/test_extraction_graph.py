@@ -24,9 +24,9 @@ def _fake_completion(json_content: str) -> MagicMock:
 
 
 class TestExtractionGraphRelevantSingleEvent:
-    """Full graph run: relevant page → single event extracted."""
+    """Full graph run: relevant page -> single event extracted."""
 
-    def test_full_pipeline(self, monkeypatch):
+    def test_full_pipeline(self):
         call_responses = [
             '{"is_relevant": true, "reason": "grand opening"}',
             '{"event_count": "single", "count_estimate": 1, "reason": "one restaurant"}',
@@ -72,9 +72,9 @@ class TestExtractionGraphRelevantSingleEvent:
 
 
 class TestExtractionGraphIrrelevantPage:
-    """Full graph run: irrelevant page → stops after classify_relevance."""
+    """Full graph run: irrelevant page -> stops after classify_relevance."""
 
-    def test_stops_at_relevance(self, monkeypatch):
+    def test_stops_at_relevance(self):
         from worker.app.extraction.graph import build_extraction_graph
 
         with patch("worker.app.extraction.graph.OpenAI") as MockOpenAI:
@@ -111,7 +111,7 @@ class TestExtractionGraphIrrelevantPage:
 class TestExtractionGraphMultiEvent:
     """Full graph run: relevant page with multiple events."""
 
-    def test_multi_event_path(self, monkeypatch):
+    def test_multi_event_path(self):
         multi_json = """{
             "events": [
                 {"business_name": "Bakery One", "event_type": "grand_opening",

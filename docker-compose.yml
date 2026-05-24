@@ -64,7 +64,6 @@ services:
     container_name: grand_opening_worker
     environment:
       APP_ENV: ${APP_ENV:-local}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/grand_openings}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp-server:9000}
       BACKEND_API_URL: ${BACKEND_API_URL:-http://backend-api:8000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

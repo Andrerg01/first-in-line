@@ -196,6 +196,5 @@ def create_candidate_event(
     Returns:
         A ``CandidateEventResult`` describing whether an event was created.
     """
-    body.source_document_id = source_document_id
-    return ingest_service.save_candidate_event(db, body)
+    return ingest_service.save_candidate_event(db, body, source_document_id=source_document_id)
 

@@ -28,6 +28,7 @@ Rate-limit handling:
 
 from __future__ import annotations
 
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -42,7 +43,7 @@ from worker.app.search_queries import QUERY_SET_VERSION, get_queries
 from worker.app.telemetry import TelemetryCollector, classify_outcome
 from worker.app.url_utils import canonicalize_url, is_valid_http_url
 
-_DIVIDER = chr(0x2550) * 60  # box-drawing double horizontal line (=)
+_DIVIDER = "=" * 60
 
 log = get_logger(__name__)
 
@@ -73,8 +74,11 @@ def _eta(fetch_start: float, done: int, total: int) -> str:
 
 
 def _p(msg: str = "") -> None:
-    """Print a progress line to stdout immediately."""
-    print(msg, flush=True)
+    """Print a progress line to stdout, replacing unencodable chars."""
+    safe = msg.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(
+        sys.stdout.encoding or "utf-8", errors="replace"
+    )
+    print(safe, flush=True)
 
 
 @dataclass
@@ -502,7 +506,7 @@ def _execute_run(
         return
 
     if not settings.openai_api_key:
-        run_log.warning("OPENAI_API_KEY not set — skipping extraction phase")
+        run_log.warning("OPENAI_API_KEY not set - skipping extraction phase")
         _p(f"{_fmt_elapsed(start)} WARNING: OPENAI_API_KEY not set; skipping extraction")
         return
 
@@ -552,7 +556,7 @@ def _execute_run(
             summary.pages_irrelevant += 1
             _p(f"{_fmt_elapsed(start)} \\- IRRELEVANT  {final_state.get('relevance_reason', '')[:60]}")
             # Still save LLM calls via an irrelevant candidate submission
-            # (no claims → backend marks as irrelevant and only logs LLM records)
+            # (no claims - backend marks as irrelevant and only logs LLM records)
             if all_llm_calls:
                 try:
                     api_client.save_candidate_event(
@@ -584,8 +588,10 @@ def _execute_run(
             _p(f"{_fmt_elapsed(start)} \\- x NO EVENTS  {final_state.get('error', '')[:60]}")
             continue
 
-        # Save one candidate per extracted event (multi-event support)
-        for event in extracted_events:
+        # Save one candidate per extracted event (multi-event support).
+        # LLM call records belong to the page run, not per-event, so they
+        # are only sent with the first event to avoid duplicating cost data.
+        for event_idx, event in enumerate(extracted_events):
             try:
                 result = api_client.save_candidate_event(
                     source_doc_id,
@@ -601,7 +607,9 @@ def _execute_run(
                     promotion_text=event.promotion_text,
                     confidence_score=event.confidence_score,
                     claims=[c.model_dump() for c in event.claims],
-                    llm_calls=[c.model_dump() for c in all_llm_calls],
+                    # Only attach LLM calls to the first event — they belong to
+                    # the page run, not to each individual extracted event.
+                    llm_calls=[c.model_dump() for c in all_llm_calls] if event_idx == 0 else [],
                 )
                 if result.created:
                     summary.events_created += 1
@@ -621,6 +629,10 @@ def _execute_run(
                 run_log.error("Failed to save candidate event for %s: %s", fetch_url, exc)
                 summary.extraction_errors += 1
                 _p(f"{_fmt_elapsed(start)} \\- x SAVE ERROR  {exc}")
+
+    # Update final_status if extraction had errors (W2: must reflect full run outcome)
+    if summary.extraction_errors > 0 and summary.final_status == "completed":
+        summary.final_status = "partial"
 
 
 
