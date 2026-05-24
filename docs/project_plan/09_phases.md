@@ -218,7 +218,16 @@ No LLM required for this phase
 
 ---
 
-## Phase 5 — LangGraph Extraction Workflow
+## Phase 5 — LangGraph Extraction Workflow ✅ COMPLETE
+
+## Status
+
+**Completed.** 218 tests passing. VERSION `0.6.1`.
+
+Includes post-completion improvements shipped in the same branch:
+- `SEARCH_PROVIDER` env var: `duckduckgo`, `brave`, `duckduckgo+brave`, `stub` modes.
+- Brave Search rate-limit handling: header-driven retry on 429, proactive sleep
+  when per-second quota exhausted.
 
 ## Goal
 

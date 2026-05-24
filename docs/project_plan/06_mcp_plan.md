@@ -75,6 +75,8 @@ Output:
 
 ```json
 {
+  "provider": "brave",
+  "query": "...",
   "results": [
     {
       "rank": 1,
@@ -86,7 +88,20 @@ Output:
 }
 ```
 
-Initial implementation can be stubbed/manual if no search API is configured yet.
+Search provider is controlled by the `SEARCH_PROVIDER` environment variable:
+
+| Value | Behaviour |
+|-------|-----------|
+| `duckduckgo` | DuckDuckGo only (free, no key, ~10 results/query) |
+| `brave` | Brave Search API only (requires `BRAVE_SEARCH_API_KEY`, up to 20 results/query) |
+| `duckduckgo+brave` | DuckDuckGo first; Brave fallback when DDG returns 0 results |
+| `stub` | Deterministic stubs for testing (no network) |
+
+**Brave rate limiting:** The free tier enforces 1 request/second.
+The implementation reads `X-RateLimit-Reset` and `X-RateLimit-Remaining` from
+every response, retries up to 3 times on HTTP 429, and proactively sleeps when
+the per-second quota hits 0 to prevent the next sequential call from immediately
+hitting a 429.
 
 ## `geo.geocode_address`
 

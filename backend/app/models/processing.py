@@ -17,6 +17,7 @@ from app.db import Base
 
 if TYPE_CHECKING:
     from app.models.events import Event
+    from app.models.llm_calls import LLMCall
     from app.models.sources import SourceDocument
 
 
@@ -40,6 +41,9 @@ class ProcessingDecision(Base):
     decision_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    llm_call_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("llm_calls.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now
     )
@@ -49,4 +53,7 @@ class ProcessingDecision(Base):
     )
     event: Mapped[Event | None] = relationship(
         "Event", back_populates="processing_decisions"
+    )
+    llm_call: Mapped[LLMCall | None] = relationship(
+        "LLMCall", back_populates="processing_decisions"
     )

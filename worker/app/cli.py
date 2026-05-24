@@ -1,4 +1,4 @@
-"""Worker CLI entry point — dispatches named ingestion and maintenance commands."""
+"""Worker CLI entry point - dispatches named ingestion and maintenance commands."""
 import argparse
 
 from worker.app import pipeline
@@ -35,15 +35,19 @@ def cmd_run_once(dry_run: bool = False) -> int:
     elapsed_str = f"{m:02d}:{s:02d}"
     status_label = summary.final_status.upper()
 
-    divider = "═" * 60
+    divider = "=" * 60
     print(divider)
-    print(f"  Run {str(summary.run_id)[:8]}…  ·  {status_label}")
+    print(f"  Run {str(summary.run_id)[:8]}...  |  {status_label}")
     print(f"  Queries   : {summary.queries_executed}")
     print(f"  Results   : {summary.search_results_found}")
     print(f"  URLs tried: {summary.urls_attempted}")
     print(f"  New docs  : {summary.source_docs_created}")
     print(f"  Skipped   : {summary.source_docs_skipped}")
     print(f"  Errors    : {summary.fetch_errors}")
+    print(f"  LLM pages : {summary.llm_pages_processed}")
+    print(f"  Events    : {summary.events_created}")
+    print(f"  Irrelevant: {summary.pages_irrelevant}")
+    print(f"  Ext errors: {summary.extraction_errors}")
     print(f"  Elapsed   : {elapsed_str}")
     if summary.notes:
         print(f"  Note      : {summary.notes}")

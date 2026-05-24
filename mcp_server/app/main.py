@@ -49,14 +49,21 @@ _PLANNED_TOOLS = [
 ]
 
 # Search configuration
-_SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "duckduckgo")  # duckduckgo | stub
+# Valid values:
+#   duckduckgo       — DuckDuckGo only (free, no key, ~10 results/query)
+#   brave            — Brave Search API only (requires BRAVE_SEARCH_API_KEY, up to 20 results)
+#   duckduckgo+brave — DuckDuckGo first; Brave fallback when DDG returns 0 results
+#   stub             — deterministic test stubs (no network)
+_SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "duckduckgo")  # see valid values above
 _SEARCH_TIMEOUT = 8.0   # seconds for DDGS calls; kept short so rate-limit hangs fail fast
 
 # Brave Search API (used as DuckDuckGo fallback when it returns 0 results)
 _BRAVE_SEARCH_API_KEY = os.environ.get("BRAVE_SEARCH_API_KEY", "")
 _BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
 _BRAVE_SEARCH_TIMEOUT = 10.0
-_BRAVE_MAX_RESULTS = 20  # Brave free-tier hard cap per request
+_BRAVE_MAX_RESULTS = 20       # Brave free-tier hard cap per request
+_BRAVE_SEARCH_MAX_RETRIES = 3  # max attempts on HTTP 429
+_BRAVE_SEARCH_RETRY_CAP = 5.0  # max seconds to wait on a rate-limit back-off
 
 _FETCH_TIMEOUT = 15.0  # seconds
 _MAX_TEXT_BYTES = 500_000  # guard against huge pages
@@ -497,10 +504,41 @@ def _search_duckduckgo(query: str, max_results: int) -> list[SearchResultItem]:
     ]
 
 
+def _parse_brave_ratelimit_reset(reset_header: str | None) -> float:
+    """Return the per-second window reset delay from Brave's X-RateLimit-Reset header.
+
+    The header contains comma-separated values for each rate-limit window.
+    The first value is always the per-second (burst) window reset, in seconds.
+    Example: ``"1, 1419704"`` → returns ``1.0``.
+
+    Clamps to [0.1, ``_BRAVE_SEARCH_RETRY_CAP``] so the caller never waits
+    an unreasonable amount of time.
+
+    Args:
+        reset_header: Raw ``X-RateLimit-Reset`` header value, or ``None``.
+
+    Returns:
+        Seconds to wait before the per-second burst quota resets.
+    """
+    if not reset_header:
+        return 1.0
+    try:
+        first = reset_header.split(",")[0].strip()
+        seconds = float(first)
+        return min(max(0.1, seconds), _BRAVE_SEARCH_RETRY_CAP)
+    except (ValueError, IndexError):
+        return 1.0
+
+
 def _search_brave(query: str, max_results: int) -> list[SearchResultItem]:
     """Perform a web search using the Brave Search API.
 
-    Used as a fallback when DuckDuckGo returns no results (e.g. rate-limited).
+    Retries up to ``_BRAVE_SEARCH_MAX_RETRIES`` times on HTTP 429, waiting the
+    duration indicated by the ``X-RateLimit-Reset`` response header before each
+    retry.  After a successful response, sleeps briefly when
+    ``X-RateLimit-Remaining`` reports the per-second quota is exhausted so the
+    next sequential call does not immediately trigger another 429.
+
     Requires ``BRAVE_SEARCH_API_KEY`` to be set; returns ``[]`` silently if not.
 
     Args:
@@ -514,32 +552,82 @@ def _search_brave(query: str, max_results: int) -> list[SearchResultItem]:
         return []
 
     count = min(max_results, _BRAVE_MAX_RESULTS)
-    try:
-        with httpx.Client(timeout=_BRAVE_SEARCH_TIMEOUT) as client:
-            resp = client.get(
-                _BRAVE_SEARCH_URL,
-                params={"q": query, "count": count},
-                headers={
-                    "X-Subscription-Token": _BRAVE_SEARCH_API_KEY,
-                    "Accept": "application/json",
-                },
-            )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Brave Search error for query %r: %s", query, exc)
-        return []
+    req_headers = {
+        "X-Subscription-Token": _BRAVE_SEARCH_API_KEY,
+        "Accept": "application/json",
+    }
 
-    raw = data.get("web", {}).get("results", [])
-    return [
-        SearchResultItem(
-            rank=i + 1,
-            title=r.get("title"),
-            url=r.get("url", ""),
-            snippet=r.get("description"),
-        )
-        for i, r in enumerate(raw)
-    ]
+    for attempt in range(_BRAVE_SEARCH_MAX_RETRIES):
+        try:
+            with httpx.Client(timeout=_BRAVE_SEARCH_TIMEOUT) as client:
+                resp = client.get(
+                    _BRAVE_SEARCH_URL,
+                    params={"q": query, "count": count},
+                    headers=req_headers,
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Brave Search network error for query %r: %s", query, exc)
+            return []
+
+        if resp.status_code == 429:
+            wait = _parse_brave_ratelimit_reset(resp.headers.get("X-RateLimit-Reset"))
+            if attempt < _BRAVE_SEARCH_MAX_RETRIES - 1:
+                log.warning(
+                    "Brave Search rate-limited for query %r; waiting %.1fs "
+                    "(attempt %d/%d)",
+                    query, wait, attempt + 1, _BRAVE_SEARCH_MAX_RETRIES,
+                )
+                time.sleep(wait)
+                continue
+            log.warning(
+                "Brave Search rate-limited for query %r after %d attempts; "
+                "returning empty",
+                query, _BRAVE_SEARCH_MAX_RETRIES,
+            )
+            return []
+
+        if resp.status_code != 200:
+            log.warning("Brave Search HTTP %d for query %r", resp.status_code, query)
+            return []
+
+        # Successful response.  If the per-second quota is now exhausted,
+        # sleep for the reset duration so the next sequential query does not
+        # immediately hit a 429.
+        remaining_header = resp.headers.get("X-RateLimit-Remaining", "")
+        if remaining_header:
+            try:
+                per_second_remaining = int(remaining_header.split(",")[0].strip())
+                if per_second_remaining == 0:
+                    pause = _parse_brave_ratelimit_reset(
+                        resp.headers.get("X-RateLimit-Reset")
+                    )
+                    log.debug(
+                        "Brave per-second quota exhausted; pausing %.1fs before "
+                        "next call (query %r)",
+                        pause, query,
+                    )
+                    time.sleep(pause)
+            except (ValueError, IndexError):
+                pass
+
+        try:
+            data = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Brave Search JSON parse error for query %r: %s", query, exc)
+            return []
+
+        raw = data.get("web", {}).get("results", [])
+        return [
+            SearchResultItem(
+                rank=i + 1,
+                title=r.get("title"),
+                url=r.get("url", ""),
+                snippet=r.get("description"),
+            )
+            for i, r in enumerate(raw)
+        ]
+
+    return []  # all retries exhausted
 
 
 def _search_stub(query: str, max_results: int) -> list[SearchResultItem]:  # noqa: ARG001
@@ -572,9 +660,11 @@ def _search_stub(query: str, max_results: int) -> list[SearchResultItem]:  # noq
 def web_search(body: SearchRequest) -> SearchResponse:
     """Search the web and return a ranked list of results.
 
-    Uses DuckDuckGo by default (no API key required).  Set the
-    ``SEARCH_PROVIDER=stub`` environment variable to get deterministic
-    stub results for testing.
+    Provider is controlled by the ``SEARCH_PROVIDER`` environment variable:
+    - ``duckduckgo``       — DuckDuckGo only (free, ~10 results)
+    - ``brave``            — Brave Search API only (requires BRAVE_SEARCH_API_KEY)
+    - ``duckduckgo+brave`` — DuckDuckGo first; Brave fallback if DDG returns 0
+    - ``stub``             — deterministic stubs for testing
 
     Args:
         body: Request containing the query string and max_results cap.
@@ -583,22 +673,37 @@ def web_search(body: SearchRequest) -> SearchResponse:
         A SearchResponse with ranked result items.
     """
     provider = _SEARCH_PROVIDER
+
     if provider == "stub":
         results = _search_stub(body.query, body.max_results)
-    else:
+
+    elif provider == "brave":
+        if not _BRAVE_SEARCH_API_KEY:
+            log.warning(
+                "SEARCH_PROVIDER=brave but BRAVE_SEARCH_API_KEY is not set; "
+                "returning empty results for query %r",
+                body.query,
+            )
+            results = []
+        else:
+            results = _search_brave(body.query, body.max_results)
+
+    elif provider == "duckduckgo+brave":
         results = _search_duckduckgo(body.query, body.max_results)
         provider = "duckduckgo"
-
-        # Fallback: if DuckDuckGo returned nothing (likely rate-limited) and a
-        # Brave API key is configured, retry the same query with Brave.
         if not results and _BRAVE_SEARCH_API_KEY:
             log.info(
-                "DuckDuckGo returned 0 results for %r — trying Brave fallback",
+                "DDG returned 0 results for %r — trying Brave fallback",
                 body.query,
             )
             results = _search_brave(body.query, body.max_results)
             if results:
                 provider = "brave"
+
+    else:
+        # default: duckduckgo only
+        results = _search_duckduckgo(body.query, body.max_results)
+        provider = "duckduckgo"
 
     log.info(
         "web.search query=%r provider=%s results=%d",

@@ -6,6 +6,7 @@ discover them when it imports ``app.models``.
 
 from app.models.claims import EventClaim  # noqa: F401
 from app.models.events import Event  # noqa: F401
+from app.models.llm_calls import LLMCall  # noqa: F401
 from app.models.locations import Location  # noqa: F401
 from app.models.processing import ProcessingDecision  # noqa: F401
 from app.models.search import SearchResult, SearchRun  # noqa: F401
@@ -21,5 +22,6 @@ __all__ = [
     "EventSource",
     "EventClaim",
     "ProcessingDecision",
+    "LLMCall",
     "PipelineToolCall",
 ]

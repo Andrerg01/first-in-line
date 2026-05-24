@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from app.models.events import Event
 from app.models.sources import EventSource, SourceDocument
 
 
@@ -71,7 +72,7 @@ def find_source_by_hash(db: Session, text_hash: str | None) -> SourceDocument | 
 def get_event_source_for_source_document(
     db: Session, source_document_id: uuid.UUID
 ) -> EventSource | None:
-    """Return the first EventSource linking this source document to an event.
+    """Return the first EventSource linking this source document to any event.
 
     Args:
         db: Active database session.
@@ -83,6 +84,35 @@ def get_event_source_for_source_document(
     stmt = (
         select(EventSource)
         .where(EventSource.source_document_id == source_document_id)
+        .limit(1)
+    )
+    return db.scalars(stmt).first()
+
+
+def find_event_source_by_source_and_business(
+    db: Session,
+    source_document_id: uuid.UUID,
+    business_name: str,
+) -> EventSource | None:
+    """Return an EventSource if this source doc already has an event with the given business name.
+
+    Used for idempotency in multi-event workflows: multiple events may be linked
+    to one source document, so deduplication must be scoped to the (source doc,
+    business name) pair rather than the source doc alone.
+
+    Args:
+        db: Active database session.
+        source_document_id: UUID of the source document.
+        business_name: Business name to match against linked events.
+
+    Returns:
+        The matching ``EventSource`` or ``None``.
+    """
+    stmt = (
+        select(EventSource)
+        .join(Event, EventSource.event_id == Event.id)
+        .where(EventSource.source_document_id == source_document_id)
+        .where(Event.business_name == business_name)
         .limit(1)
     )
     return db.scalars(stmt).first()

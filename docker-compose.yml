@@ -64,7 +64,6 @@ services:
     container_name: grand_opening_worker
     environment:
       APP_ENV: ${APP_ENV:-local}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/grand_openings}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp-server:9000}
       BACKEND_API_URL: ${BACKEND_API_URL:-http://backend-api:8000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -73,9 +72,13 @@ services:
       SCRAPER_MAX_RESULTS_PER_QUERY: ${SCRAPER_MAX_RESULTS_PER_QUERY:-10}
       SCRAPER_DAILY_PAGE_LIMIT: ${SCRAPER_DAILY_PAGE_LIMIT:-50}
       SCRAPER_RATE_LIMIT_SECONDS: ${SCRAPER_RATE_LIMIT_SECONDS:-2.0}
+      SCRAPER_LLM_PAGE_LIMIT: ${SCRAPER_LLM_PAGE_LIMIT:-30}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       WORKER_REQUEST_TIMEOUT: ${WORKER_REQUEST_TIMEOUT:-30.0}
       WORKER_BACKOFF_BASE: ${WORKER_BACKOFF_BASE:-1.0}
       WORKER_MAX_RETRIES: ${WORKER_MAX_RETRIES:-3}
+      WORKER_CLASSIFY_MODEL: ${WORKER_CLASSIFY_MODEL:-gpt-4o-mini}
+      WORKER_EXTRACT_MODEL: ${WORKER_EXTRACT_MODEL:-gpt-4o-mini}
     depends_on:
       postgres:
         condition: service_healthy

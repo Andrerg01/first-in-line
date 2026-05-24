@@ -345,3 +345,7 @@ class _SummaryStub:
         self.fetch_errors = 0
         self.elapsed_seconds = 0.0
         self.notes = ""
+        self.llm_pages_processed = 0
+        self.events_created = 0
+        self.pages_irrelevant = 0
+        self.extraction_errors = 0

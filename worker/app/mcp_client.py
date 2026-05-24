@@ -189,9 +189,9 @@ def search(query: str, max_results: int | None = None) -> SearchResponse:
             cause is None and "timed out" in str(exc).lower()
         ):
             log.warning(
-                "RATE LIMIT LIKELY — all web.search retries timed out for query %r. "
+                "RATE LIMIT LIKELY - all web.search retries timed out for query %r. "
                 "DuckDuckGo is probably rate-limiting this container IP. "
-                "Wait 30–60 minutes before the next run, or set "
+                "Wait 30-60 minutes before the next run, or set "
                 "SEARCH_PROVIDER=stub in the MCP server environment for testing.",
                 query,
             )

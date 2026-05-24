@@ -16,7 +16,13 @@ import pytest
 from app.models.events import Event
 from app.models.processing import ProcessingDecision
 from app.models.sources import EventSource, SourceDocument
-from app.schemas.ingest import LLMClaim, LLMExtractionResult, ManualIngestResponse
+from app.schemas.ingest import (
+    CandidateClaimCreate,
+    CandidateEventCreate,
+    LLMClaim,
+    LLMExtractionResult,
+    ManualIngestResponse,
+)
 from app.services import ingest_service
 from app.exceptions import ConfigurationError, ExtractionError, MCPError
 
@@ -536,3 +542,107 @@ class TestHttpCallWithRetry:
                 max_retries=3,
             )
         assert call_count == 3  # all 3 attempts made
+
+
+# ---------------------------------------------------------------------------
+# Tests -- save_candidate_event (W6)
+# ---------------------------------------------------------------------------
+
+
+def _make_source_doc(db) -> SourceDocument:
+    """Insert a minimal SourceDocument and return it."""
+    doc = SourceDocument(
+        url="https://example.com/opening",
+        canonical_url="https://example.com/opening",
+        domain="example.com",
+        fetch_status="success",
+    )
+    db.add(doc)
+    db.flush()
+    return doc
+
+
+def _candidate_body(**kwargs) -> CandidateEventCreate:
+    defaults: dict = {
+        "source_document_id": uuid.uuid4(),
+        "business_name": "Test Cafe",
+        "event_type": "grand_opening",
+        "category": "cafe",
+        "city": "Greenville",
+        "state": "SC",
+        "confidence_score": 0.9,
+        "claims": [
+            CandidateClaimCreate(
+                claim_type="business_name",
+                claim_value="Test Cafe",
+                claim_text="Test Cafe is opening",
+            )
+        ],
+        "llm_calls": [],
+    }
+    defaults.update(kwargs)
+    return CandidateEventCreate(**defaults)
+
+
+class TestSaveCandidateEvent:
+    """Unit tests for ingest_service.save_candidate_event."""
+
+    def test_unknown_source_document_raises_404(self, db_session):
+        """Passing a source_document_id that does not exist raises HTTP 404."""
+        from fastapi import HTTPException
+
+        body = _candidate_body(source_document_id=uuid.uuid4())
+        with pytest.raises(HTTPException) as exc_info:
+            ingest_service.save_candidate_event(
+                db_session, body, source_document_id=uuid.uuid4()
+            )
+        assert exc_info.value.status_code == 404
+
+    def test_irrelevant_page_creates_no_event(self, db_session):
+        """A body with no business_name and no claims is treated as irrelevant."""
+        doc = _make_source_doc(db_session)
+        body = CandidateEventCreate(
+            source_document_id=doc.id,
+            business_name=None,
+            event_type="unknown",
+            claims=[],
+            llm_calls=[],
+        )
+        result = ingest_service.save_candidate_event(
+            db_session, body, source_document_id=doc.id
+        )
+        assert result.irrelevant is True
+        assert result.event_id is None
+        assert db_session.query(Event).count() == 0
+
+    def test_duplicate_same_business_name_returns_duplicate(self, db_session):
+        """Submitting the same (source_doc, business_name) twice returns duplicate=True."""
+        doc = _make_source_doc(db_session)
+        body = _candidate_body(source_document_id=doc.id)
+
+        result1 = ingest_service.save_candidate_event(
+            db_session, body, source_document_id=doc.id
+        )
+        assert result1.created is True
+
+        result2 = ingest_service.save_candidate_event(
+            db_session, body, source_document_id=doc.id
+        )
+        assert result2.duplicate is True
+        assert result2.event_id == result1.event_id
+        assert db_session.query(Event).count() == 1
+
+    def test_happy_path_creates_event_and_claims(self, db_session):
+        """Happy path: new event and claims are persisted, result.created is True."""
+        doc = _make_source_doc(db_session)
+        body = _candidate_body(source_document_id=doc.id)
+
+        result = ingest_service.save_candidate_event(
+            db_session, body, source_document_id=doc.id
+        )
+
+        assert result.created is True
+        assert result.event_id is not None
+        event = db_session.query(Event).filter_by(id=result.event_id).one()
+        assert event.business_name == "Test Cafe"
+        assert db_session.query(EventSource).count() == 1

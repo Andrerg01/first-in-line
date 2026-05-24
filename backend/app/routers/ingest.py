@@ -8,7 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.schemas.ingest import ManualIngestRequest, ManualIngestResponse
+from app.schemas.ingest import (
+    CandidateEventCreate,
+    CandidateEventResult,
+    ManualIngestRequest,
+    ManualIngestResponse,
+)
 from app.schemas.search import (
     SearchResultsCreate,
     SearchRunCreate,
@@ -164,4 +169,32 @@ def add_tool_calls(
     if count is None:
         raise HTTPException(status_code=404, detail="SearchRun not found")
     return {"saved": count}
+
+
+@router.post(
+    "/source-document/{source_document_id}/candidate",
+    response_model=CandidateEventResult,
+    status_code=201,
+)
+def create_candidate_event(
+    source_document_id: uuid.UUID,
+    body: CandidateEventCreate,
+    db: Session = Depends(get_db),
+) -> CandidateEventResult:
+    """Create a candidate event from a worker LangGraph extraction result.
+
+    The worker calls this after the extraction graph produces a result for
+    a source document.  Persists the event, claims, and all LLM call records
+    in a single transaction.  Idempotent: if the source document already has
+    a linked event the response contains ``duplicate=True``.
+
+    Args:
+        source_document_id: UUID of the source document that was processed.
+        body: Extraction result payload including event fields and LLM calls.
+        db: Injected database session.
+
+    Returns:
+        A ``CandidateEventResult`` describing whether an event was created.
+    """
+    return ingest_service.save_candidate_event(db, body, source_document_id=source_document_id)
 
