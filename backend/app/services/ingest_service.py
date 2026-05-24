@@ -43,6 +43,7 @@ from app.schemas.search import (
     SourceDocumentFromFetch,
     SourceDocumentStoreResult,
 )
+from app.schemas.telemetry import ToolCallCreate
 
 log = logging.getLogger(__name__)
 
@@ -590,7 +591,7 @@ def finish_search_run(
 def save_tool_calls(
     db: Session,
     run_id: uuid.UUID,
-    tool_calls: list,
+    tool_calls: list[ToolCallCreate],
 ) -> int | None:
     """Bulk-insert pipeline tool call telemetry for a search run.
 

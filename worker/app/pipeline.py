@@ -40,7 +40,6 @@ from worker.app.telemetry import TelemetryCollector, classify_outcome
 from worker.app.url_utils import canonicalize_url, is_valid_http_url
 
 _DIVIDER = chr(0x2550) * 60  # box-drawing double horizontal line (=)
-_LOCATION = "Greenville, SC"
 
 log = get_logger(__name__)
 
@@ -101,12 +100,12 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
         A ``RunSummary`` describing what was done.
     """
     start = time.monotonic()
-    queries = get_queries()
+    queries = get_queries(location=settings.target_location)
     collector = TelemetryCollector()
 
     _p(_DIVIDER)
     _p("  Grand Opening Radar -- Discovery Run")
-    _p(f"  Location : {_LOCATION}")
+    _p(f"  Location : {settings.target_location}")
     _p(f"  Queries  : {len(queries)}  |  URL cap: {settings.max_urls_per_run}  |  Dry run: {'Yes' if dry_run else 'No'}")
     _p(_DIVIDER)
 
@@ -278,7 +277,7 @@ def _execute_run(
         )
         if i < n_queries and not dry_run and settings.query_interval_seconds > 0:
             run_log.debug(
-                "Sleeping %.1fs between queries (QUERY_INTERVAL_SECONDS)",
+                "Sleeping %.1fs between queries (SCRAPER_RATE_LIMIT_SECONDS)",
                 settings.query_interval_seconds,
             )
             time.sleep(settings.query_interval_seconds)
@@ -419,12 +418,6 @@ def _execute_run(
                 error_message=fetch_resp.error_message,
                 search_run_id=summary.run_id,
             )
-            collector.record(
-                tool_name="db.store_source_document",
-                input_summary=fetch_url,
-                outcome="success",
-                duration_ms=collector.elapsed_ms(t0),
-            )
         except Exception as exc:  # noqa: BLE001
             collector.record(
                 tool_name="db.store_source_document",
@@ -440,6 +433,12 @@ def _execute_run(
             continue
 
         if store_result.created:
+            collector.record(
+                tool_name="db.store_source_document",
+                input_summary=fetch_url,
+                outcome="success",
+                duration_ms=collector.elapsed_ms(t0),
+            )
             summary.source_docs_created += 1
             short_hash = (norm_resp.text_hash or "")[:8]
             run_log.info(
@@ -463,7 +462,7 @@ def _execute_run(
 
         _p(_running_totals(summary))
 
-    if summary.fetch_errors > 0:
+    if summary.fetch_errors > 0 or (summary.search_results_found == 0 and not dry_run):
         summary.final_status = "partial"
     else:
         summary.final_status = "completed"

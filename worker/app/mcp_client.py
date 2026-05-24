@@ -19,7 +19,7 @@ Mitigation (current defaults):
   - ``_SEARCH_TIMEOUT = 8 s`` — DDGS call timeout in the MCP server.
   - MCP client uses ``timeout=12 s`` + ``max_retries=1`` for search so each
     query fails in at most ~12 s instead of 3 × 30 s = 90 s.
-  - ``QUERY_INTERVAL_SECONDS = 2 s`` (default) adds a mandatory pause between
+  - ``SCRAPER_RATE_LIMIT_SECONDS = 2 s`` (default) adds a mandatory pause between
     consecutive queries so normal traffic doesn't trigger the limit.
 """
 
