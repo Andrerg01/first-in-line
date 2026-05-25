@@ -177,3 +177,21 @@ def run_retroactive_dedup(db: Session = Depends(get_db)) -> RetroactiveDedupResp
         message="Retroactive duplicate scan completed.",
     )
 
+
+@router.post("/geocode/run")
+def run_bulk_geocode(db: Session = Depends(get_db)) -> dict:
+    """Geocode all events that are missing lat/lon coordinates.
+
+    Scans events with address/city information but no geocoordinates and
+    calls the MCP ``geo.geocode_address`` tool for each one.  The operation
+    is best-effort: individual geocode failures do not abort the run.
+
+    Args:
+        db: Injected database session.
+
+    Returns:
+        Dict with ``attempted``, ``geocoded``, and ``skipped`` counts.
+    """
+    from app.services import geocode_service  # local import avoids circular
+    return geocode_service.geocode_ungeocoded_events(db)
+

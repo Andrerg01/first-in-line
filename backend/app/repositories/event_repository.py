@@ -202,3 +202,49 @@ def list_events_pointing_to_duplicate_target(
     """
     stmt = select(Event).where(Event.duplicate_of_id == duplicate_of_id)
     return list(db.scalars(stmt).all())
+
+
+def update_event_geo(
+    db: Session,
+    event: Event,
+    *,
+    lat: float,
+    lon: float,
+) -> Event:
+    """Update the lat/lon coordinates on an event and flush.
+
+    Args:
+        db: Active database session.
+        event: The ``Event`` ORM instance to update.
+        lat: Latitude in decimal degrees.
+        lon: Longitude in decimal degrees.
+
+    Returns:
+        The updated ``Event`` instance.
+    """
+    event.lat = lat
+    event.lon = lon
+    db.flush()
+    return event
+
+
+def get_ungeocoded_events(db: Session, *, limit: int = 500) -> list[Event]:
+    """Return events that have address information but no lat/lon.
+
+    Args:
+        db: Active database session.
+        limit: Maximum number of events to return.
+
+    Returns:
+        A list of ``Event`` instances without geocoordinates.
+    """
+    stmt = (
+        select(Event)
+        .where(
+            Event.lat.is_(None),
+            (Event.address.is_not(None)) | (Event.city.is_not(None)),
+        )
+        .order_by(Event.created_at.asc())
+        .limit(limit)
+    )
+    return list(db.scalars(stmt).all())

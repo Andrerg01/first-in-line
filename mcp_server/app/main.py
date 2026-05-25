@@ -4,9 +4,9 @@ Tools implemented in this module:
 - web.fetch_page    — fetch a URL and extract visible text
 - web.normalize_text — normalize and SHA-256 hash visible text
 - web.search        — search the web and return ranked URL results
+- geo.geocode_address — geocode an address string via Nominatim
 
 Future tools (LangGraph Phase 5):
-- geo.geocode_address
 - db.find_source_by_hash
 - db.find_similar_events
 """
@@ -37,13 +37,13 @@ TOOL_LIST = [
     "web.fetch_page",
     "web.normalize_text",
     "web.search",
+    "geo.geocode_address",
 ]
 
 # Planned tools — not yet implemented; kept here to document the roadmap.
 # NOTE: MCP tools must be read-only or bounded narrow writes; any event
 # creation/modification must go through the backend API, not MCP directly.
 _PLANNED_TOOLS = [
-    "geo.geocode_address",
     "db.find_source_by_hash",
     "db.find_similar_events",
 ]
@@ -56,6 +56,15 @@ _PLANNED_TOOLS = [
 #   stub             — deterministic test stubs (no network)
 _SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "duckduckgo")  # see valid values above
 _SEARCH_TIMEOUT = 8.0   # seconds for DDGS calls; kept short so rate-limit hangs fail fast
+
+# Geocoding configuration
+# Valid values:
+#   nominatim — Nominatim OSM (free, no API key, 1 req/sec limit)
+#   stub      — deterministic stub for testing (no network)
+_GEOCODE_PROVIDER = os.environ.get("GEOCODE_PROVIDER", "nominatim")
+_NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+_NOMINATIM_TIMEOUT = 10.0
+_NOMINATIM_USER_AGENT = "GrandOpeningRadar/0.1 (+https://github.com/Andrerg01/grand-opening-radar)"
 
 # Brave Search API (used as DuckDuckGo fallback when it returns 0 results)
 _BRAVE_SEARCH_API_KEY = os.environ.get("BRAVE_SEARCH_API_KEY", "")
@@ -710,3 +719,147 @@ def web_search(body: SearchRequest) -> SearchResponse:
         body.query, provider, len(results),
     )
     return SearchResponse(query=body.query, provider=provider, results=results)
+
+
+# ---------------------------------------------------------------------------
+# Geocode schemas
+# ---------------------------------------------------------------------------
+
+
+class GeocodeRequest(BaseModel):
+    """Request body for geo.geocode_address."""
+
+    address: str = Field(min_length=3, max_length=500)
+
+
+class GeocodeResponse(BaseModel):
+    """Geocode result with coordinates and provider metadata."""
+
+    address: str
+    lat: float | None
+    lon: float | None
+    normalized_address: str | None
+    confidence: float | None
+    provider: str
+    error: str | None
+
+
+# ---------------------------------------------------------------------------
+# Geocode helpers
+# ---------------------------------------------------------------------------
+
+
+def _geocode_nominatim(address: str) -> GeocodeResponse:
+    """Geocode an address using the Nominatim OpenStreetMap API.
+
+    Respects the Nominatim usage policy: one request per second and a
+    meaningful User-Agent that identifies this application.
+
+    Args:
+        address: Free-form address string to geocode.
+
+    Returns:
+        A ``GeocodeResponse`` with lat/lon, or a failed response on error.
+    """
+    try:
+        with httpx.Client(timeout=_NOMINATIM_TIMEOUT) as client:
+            resp = client.get(
+                _NOMINATIM_URL,
+                params={"q": address, "format": "json", "limit": 1},
+                headers={"User-Agent": _NOMINATIM_USER_AGENT},
+            )
+        resp.raise_for_status()
+        results = resp.json()
+    except Exception as exc:
+        log.warning("Nominatim geocode failed for %r: %s", address, exc)
+        return GeocodeResponse(
+            address=address,
+            lat=None,
+            lon=None,
+            normalized_address=None,
+            confidence=None,
+            provider="nominatim",
+            error=str(exc),
+        )
+
+    if not results:
+        return GeocodeResponse(
+            address=address,
+            lat=None,
+            lon=None,
+            normalized_address=None,
+            confidence=None,
+            provider="nominatim",
+            error="No results found",
+        )
+
+    hit = results[0]
+    return GeocodeResponse(
+        address=address,
+        lat=float(hit["lat"]),
+        lon=float(hit["lon"]),
+        normalized_address=hit.get("display_name"),
+        confidence=float(hit.get("importance", 0.0)),
+        provider="nominatim",
+        error=None,
+    )
+
+
+def _geocode_stub(address: str) -> GeocodeResponse:
+    """Return deterministic stub geocode results for testing without network.
+
+    Addresses containing "Greenville" or "SC" return a fixed Greenville, SC
+    coordinate. All other inputs return a no-result response.
+
+    Args:
+        address: Address string.
+
+    Returns:
+        A deterministic ``GeocodeResponse``.
+    """
+    lower = address.lower()
+    if "greenville" in lower or " sc" in lower or ",sc" in lower:
+        return GeocodeResponse(
+            address=address,
+            lat=34.8526,
+            lon=-82.3940,
+            normalized_address="Greenville, Greenville County, South Carolina, United States",
+            confidence=0.85,
+            provider="stub",
+            error=None,
+        )
+    return GeocodeResponse(
+        address=address,
+        lat=None,
+        lon=None,
+        normalized_address=None,
+        confidence=None,
+        provider="stub",
+        error="No stub match for address",
+    )
+
+
+@app.post("/tools/geo.geocode_address", response_model=GeocodeResponse)
+def geocode_address(body: GeocodeRequest) -> GeocodeResponse:
+    """Geocode a free-form address string and return lat/lon coordinates.
+
+    Provider is controlled by the ``GEOCODE_PROVIDER`` environment variable:
+    - ``nominatim`` — Nominatim OSM (free, no key; 1 req/sec usage policy)
+    - ``stub``      — deterministic stubs for testing (no network)
+
+    Args:
+        body: Request containing the address string.
+
+    Returns:
+        A ``GeocodeResponse`` with lat/lon coordinates and provider metadata.
+    """
+    if _GEOCODE_PROVIDER == "stub":
+        result = _geocode_stub(body.address)
+    else:
+        result = _geocode_nominatim(body.address)
+
+    log.info(
+        "geo.geocode_address address=%r provider=%s found=%s",
+        body.address, result.provider, result.lat is not None,
+    )
+    return result
