@@ -8,7 +8,6 @@ geocode never aborts the calling pipeline.
 from __future__ import annotations
 
 import logging
-import uuid
 
 import httpx
 from sqlalchemy.orm import Session
@@ -20,7 +19,7 @@ from app.repositories import event_repository
 log = logging.getLogger(__name__)
 
 _GEOCODE_TIMEOUT = 12.0
-_MAX_UNGEOODED_BATCH = 500  # safety cap on bulk-geocode runs
+_MAX_UNGEOCODED_BATCH = 500  # safety cap on bulk-geocode runs
 
 
 def _build_address_query(event: Event) -> str | None:
@@ -121,7 +120,7 @@ def geocode_ungeocoded_events(db: Session) -> dict[str, int]:
     Returns:
         Dict with keys ``attempted``, ``geocoded``, ``skipped``.
     """
-    events = event_repository.get_ungeocoded_events(db, limit=_MAX_UNGEOODED_BATCH)
+    events = event_repository.get_ungeocoded_events(db, limit=_MAX_UNGEOCODED_BATCH)
     attempted = 0
     geocoded = 0
     skipped = 0
@@ -137,7 +136,6 @@ def geocode_ungeocoded_events(db: Session) -> dict[str, int]:
         if success:
             geocoded += 1
 
-    db.commit()
     log.info(
         "geocode_ungeocoded_events: attempted=%d geocoded=%d skipped=%d",
         attempted, geocoded, skipped,

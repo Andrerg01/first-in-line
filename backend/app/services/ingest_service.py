@@ -36,6 +36,7 @@ from app.repositories import (
     source_repository,
     telemetry_repository,
 )
+from app.services import geocode_service
 from app.schemas.ingest import (
     CandidateEventCreate,
     CandidateEventResult,
@@ -516,7 +517,6 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
     # 9. Best-effort geocode (non-fatal) ----------------------------------
     if event:
         try:
-            from app.services import geocode_service  # local import avoids circular
             geocode_service.geocode_event(db, event)
             db.commit()
         except Exception as exc:  # noqa: BLE001
@@ -904,7 +904,6 @@ def save_candidate_event(
 
     # Best-effort geocode (non-fatal) ------------------------------------
     try:
-        from app.services import geocode_service  # local import avoids circular
         geocode_service.geocode_event(db, event)
         db.commit()
     except Exception as exc:  # noqa: BLE001

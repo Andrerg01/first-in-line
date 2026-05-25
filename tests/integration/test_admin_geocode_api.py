@@ -47,9 +47,10 @@ class TestAdminGeocodeRun:
 
         assert resp.status_code == 200
         body = resp.json()
-        assert "attempted" in body
-        assert "geocoded" in body
-        assert "skipped" in body
+        # Verify all three GeocodeRunResponse fields are present and are ints
+        assert isinstance(body.get("attempted"), int)
+        assert isinstance(body.get("geocoded"), int)
+        assert isinstance(body.get("skipped"), int)
 
     def test_no_events_returns_zero_counts(self, test_client):
         """Endpoint with empty DB returns all-zero counts."""

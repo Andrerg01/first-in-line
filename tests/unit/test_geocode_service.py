@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from app.models.events import Event
@@ -90,6 +91,50 @@ class TestGeocodeEventSkips:
         event = _event(db_session)
         result = geocode_service.geocode_event(db_session, event)
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# _call_mcp_geocode — URL, body, and raise_for_status contract
+# ---------------------------------------------------------------------------
+
+
+class TestCallMcpGeocodeContract:
+    def test_posts_to_correct_endpoint_with_correct_body(self):
+        """Verify _call_mcp_geocode sends the right URL and JSON body."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "lat": 34.85, "lon": -82.39,
+            "normalized_address": "Greenville, SC",
+            "confidence": 0.85, "provider": "stub", "error": None,
+        }
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_ctx = MagicMock()
+            mock_client_cls.return_value.__enter__.return_value = mock_ctx
+            mock_ctx.post.return_value = mock_response
+
+            result = geocode_service._call_mcp_geocode("123 Main St, Greenville, SC")
+
+        call_args = mock_ctx.post.call_args
+        assert "/tools/geo.geocode_address" in call_args[0][0]
+        assert call_args[1]["json"] == {"address": "123 Main St, Greenville, SC"}
+        mock_response.raise_for_status.assert_called_once()
+        assert result["lat"] == 34.85
+
+    def test_propagates_http_error(self):
+        """raise_for_status on a 5xx response propagates to the caller."""
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "500 Server Error", request=MagicMock(), response=MagicMock()
+        )
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_ctx = MagicMock()
+            mock_client_cls.return_value.__enter__.return_value = mock_ctx
+            mock_ctx.post.return_value = mock_response
+
+            with pytest.raises(httpx.HTTPStatusError):
+                geocode_service._call_mcp_geocode("any address")
 
 
 # ---------------------------------------------------------------------------
