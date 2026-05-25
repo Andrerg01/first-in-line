@@ -1,8 +1,8 @@
-# Grand Opening Radar - Agent Instructions
+# First In Line - Agent Instructions
 
 ## Project Mission
 
-Build Grand Opening Radar as a portfolio-grade system that discovers local grand opening events (starting with Greenville, SC), preserves source evidence, extracts structured claims, and maintains canonical event records with human-review capability.
+Build First In Line as a portfolio-grade system that discovers local grand opening events (starting with Greenville, SC), preserves source evidence, extracts structured claims, and maintains canonical event records with human-review capability.
 
 ## Product Scope
 

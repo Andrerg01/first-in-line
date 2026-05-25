@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     database_url: str = ""
     mcp_server_url: str = "http://mcp-server:9000"
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = ""  # defaults to config.toml [llm] backend_model
 
     model_config = {
         "env_file": ".env",

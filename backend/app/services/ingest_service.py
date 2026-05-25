@@ -24,6 +24,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.app_config import app_config
 from app.exceptions import ConfigurationError, ExtractionError, MCPError
 from app.models.events import Event
 from app.models.sources import SourceDocument
@@ -56,11 +57,14 @@ from app.schemas.telemetry import ToolCallCreate
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Retry configuration
+# Retry configuration — defaults from config.toml; override via env vars
 # ---------------------------------------------------------------------------
 
-_MAX_RETRIES = 3  # total attempts (1 initial + 2 retries)
-_BACKOFF_BASE = 1.0  # seconds; wait = _BACKOFF_BASE * 2**attempt
+_MAX_RETRIES: int = app_config.worker.max_retries
+_BACKOFF_BASE: float = app_config.worker.backoff_base
+
+# System prompt for OpenAI extraction — edit config.toml to change
+_SYSTEM_PROMPT: str = app_config.llm.prompts.manual_ingest
 
 _RETRYABLE_TRANSPORT_ERRORS = (
     httpx.ConnectError,
@@ -115,47 +119,6 @@ def _http_call_with_retry(
         else:
             log.error("%s failed after %d attempts: %s", label, max_retries, last_exc)
     raise last_exc  # type: ignore[misc]
-
-# ---------------------------------------------------------------------------
-# System prompt for OpenAI extraction
-# ---------------------------------------------------------------------------
-
-_SYSTEM_PROMPT = """\
-You are an expert at identifying and extracting structured information about \
-restaurant, cafe, brewery, food truck, and retail grand opening events from \
-web page text.
-
-Given the visible text of a web page, determine whether it describes a grand \
-opening (or similar: soft opening, ribbon cutting, reopening, anniversary \
-opening) event and extract structured data.
-
-Respond with a valid JSON object matching this schema exactly:
-{
-  "is_relevant": true or false,
-  "business_name": "string or null",
-  "event_name": "string or null",
-  "event_type": "grand_opening | soft_opening | ribbon_cutting | reopening | anniversary | unknown",
-  "category": "restaurant | cafe | food_truck | brewery | retail | other | null",
-  "event_date_str": "YYYY-MM-DD or null",
-  "address": "string or null",
-  "city": "string or null",
-  "state": "2-letter US state code or null",
-  "promotion_text": "string or null",
-  "confidence_score": 0.0 to 1.0,
-  "claims": [
-    {
-      "claim_type": "business_name | event_date | address | city | state | \
-promotion | event_type | category | opening_status",
-      "claim_value": "the extracted value",
-      "claim_text": "the exact quote or sentence from the page text"
-    }
-  ]
-}
-
-Set is_relevant to true only if the page clearly describes an upcoming or \
-recent grand opening (or similar) event for a restaurant, cafe, food truck, \
-brewery, or retail business.
-"""
 
 
 # ---------------------------------------------------------------------------
@@ -246,16 +209,18 @@ def _extract_event_data(url: str, normalized_text: str) -> LLMExtractionResult:
         f"URL: {url}\n\nPage text (truncated to 8000 chars):\n"
         + normalized_text[:8000]
     )
+    model = settings.openai_model or app_config.llm.backend_model
 
     try:
         completion = client.chat.completions.create(
-            model=settings.openai_model,
+            model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
             response_format={"type": "json_object"},
-            temperature=0,
+            temperature=app_config.llm.temperature,
+            max_tokens=app_config.llm.max_tokens,
         )
     except Exception as exc:
         log.error("OpenAI extraction failed for %s: %s", url, exc)
@@ -473,6 +438,9 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
             event_type=extraction.event_type or "unknown",
             category=extraction.category,
             event_date=_parse_event_date(extraction.event_date_str),
+            date_confidence=extraction.date_confidence,
+            date_range_start=extraction.date_range_start,
+            date_range_end=extraction.date_range_end,
             address=extraction.address,
             city=extraction.city,
             state=extraction.state,
@@ -694,22 +662,22 @@ def store_source_document_from_fetch(
         )
 
     now = datetime.now(timezone.utc)
-    doc = SourceDocument(
-        url=body.url,
-        canonical_url=body.canonical_url,
-        domain=body.domain,
-        title=body.title,
-        fetched_at=now,
-        visible_text=body.visible_text,
-        visible_text_hash=body.visible_text_hash,
-        fetch_status=body.fetch_status,
-        http_status=body.http_status,
-        content_type=body.content_type,
-        error_message=body.error_message,
-        fetch_method="scheduled_worker",
-    )
-    db.add(doc)
     try:
+        doc = source_repository.create_source_document(
+            db,
+            url=body.url,
+            canonical_url=body.canonical_url,
+            domain=body.domain,
+            title=body.title,
+            fetched_at=now,
+            visible_text=body.visible_text,
+            visible_text_hash=body.visible_text_hash,
+            fetch_status=body.fetch_status,
+            http_status=body.http_status,
+            content_type=body.content_type,
+            error_message=body.error_message,
+            fetch_method="scheduled_worker",
+        )
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -835,6 +803,9 @@ def save_candidate_event(
         event_type=body.event_type or "unknown",
         category=body.category,
         event_date=event_date,
+        date_confidence=body.date_confidence,
+        date_range_start=body.date_range_start,
+        date_range_end=body.date_range_end,
         address=body.address,
         city=body.city,
         state=body.state,

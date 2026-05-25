@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: grand_opening_postgres
+    container_name: first_in_line_postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-grand_openings}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -21,14 +21,17 @@ services:
 
   backend-api:
     build:
-      context: ./backend
-    container_name: grand_opening_backend
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: first_in_line_backend
     environment:
       APP_ENV: ${APP_ENV:-local}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/grand_openings}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp-server:9000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./config.toml:/app/config.toml:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,7 +43,7 @@ services:
   frontend:
     build:
       context: ./frontend
-    container_name: grand_opening_frontend
+    container_name: first_in_line_frontend
     depends_on:
       - backend-api
     ports:
@@ -49,7 +52,7 @@ services:
   mcp-server:
     build:
       context: ./mcp_server
-    container_name: grand_opening_mcp
+    container_name: first_in_line_mcp
     environment:
       APP_ENV: ${APP_ENV:-local}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -60,25 +63,28 @@ services:
 
   worker:
     build:
-      context: ./worker
-    container_name: grand_opening_worker
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: first_in_line_worker
     environment:
       APP_ENV: ${APP_ENV:-local}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp-server:9000}
       BACKEND_API_URL: ${BACKEND_API_URL:-http://backend-api:8000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PYTHONPATH: /workspace
-      SCRAPER_TARGET_LOCATION: ${SCRAPER_TARGET_LOCATION:-Greenville, SC}
-      SCRAPER_MAX_RESULTS_PER_QUERY: ${SCRAPER_MAX_RESULTS_PER_QUERY:-10}
-      SCRAPER_DAILY_PAGE_LIMIT: ${SCRAPER_DAILY_PAGE_LIMIT:-50}
-      SCRAPER_RATE_LIMIT_SECONDS: ${SCRAPER_RATE_LIMIT_SECONDS:-2.0}
-      SCRAPER_LLM_PAGE_LIMIT: ${SCRAPER_LLM_PAGE_LIMIT:-30}
+      SCRAPER_TARGET_LOCATION: ${SCRAPER_TARGET_LOCATION:-}
+      SCRAPER_MAX_RESULTS_PER_QUERY: ${SCRAPER_MAX_RESULTS_PER_QUERY:-}
+      SCRAPER_DAILY_PAGE_LIMIT: ${SCRAPER_DAILY_PAGE_LIMIT:-}
+      SCRAPER_RATE_LIMIT_SECONDS: ${SCRAPER_RATE_LIMIT_SECONDS:-}
+      SCRAPER_LLM_PAGE_LIMIT: ${SCRAPER_LLM_PAGE_LIMIT:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      WORKER_REQUEST_TIMEOUT: ${WORKER_REQUEST_TIMEOUT:-30.0}
-      WORKER_BACKOFF_BASE: ${WORKER_BACKOFF_BASE:-1.0}
-      WORKER_MAX_RETRIES: ${WORKER_MAX_RETRIES:-3}
-      WORKER_CLASSIFY_MODEL: ${WORKER_CLASSIFY_MODEL:-gpt-4o-mini}
-      WORKER_EXTRACT_MODEL: ${WORKER_EXTRACT_MODEL:-gpt-4o-mini}
+      WORKER_REQUEST_TIMEOUT: ${WORKER_REQUEST_TIMEOUT:-}
+      WORKER_BACKOFF_BASE: ${WORKER_BACKOFF_BASE:-}
+      WORKER_MAX_RETRIES: ${WORKER_MAX_RETRIES:-}
+      WORKER_CLASSIFY_MODEL: ${WORKER_CLASSIFY_MODEL:-}
+      WORKER_EXTRACT_MODEL: ${WORKER_EXTRACT_MODEL:-}
+    volumes:
+      - ./config.toml:/workspace/config.toml:ro
     depends_on:
       postgres:
         condition: service_healthy

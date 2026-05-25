@@ -115,7 +115,7 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
     collector = TelemetryCollector()
 
     _p(_DIVIDER)
-    _p("  Grand Opening Radar -- Discovery Run")
+    _p("  First In Line -- Discovery Run")
     _p(f"  Location : {settings.target_location}")
     _p(f"  Queries  : {len(queries)}  |  URL cap: {settings.max_urls_per_run}  |  Dry run: {'Yes' if dry_run else 'No'}")
     _p(_DIVIDER)
@@ -567,6 +567,9 @@ def _execute_run(
                         event_type="unknown",
                         category=None,
                         event_date_str=None,
+                        date_confidence=None,
+                        date_range_start=None,
+                        date_range_end=None,
                         address=None,
                         city=None,
                         state=None,
@@ -601,6 +604,9 @@ def _execute_run(
                     event_type=event.event_type,
                     category=event.category,
                     event_date_str=event.event_date_str,
+                    date_confidence=event.date_confidence,
+                    date_range_start=event.date_range_start,
+                    date_range_end=event.date_range_end,
                     address=event.address,
                     city=event.city,
                     state=event.state,

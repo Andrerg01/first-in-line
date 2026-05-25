@@ -52,6 +52,25 @@ function formatDate(iso) {
   });
 }
 
+function formatEventDate(ev) {
+  if (!ev.event_date) return "—";
+  const conf = ev.date_confidence;
+  if (!conf || conf === "exact") return formatDate(ev.event_date);
+  const year = ev.event_date.slice(0, 4);
+  if (conf === "unknown") return "Unknown";
+  if (conf === "year") return `~${year}`;
+  if (conf === "month") {
+    const [y, m] = ev.event_date.slice(0, 7).split("-");
+    return `~${new Date(+y, +m - 1, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" })}`;
+  }
+  if (conf === "season" && ev.date_range_start) {
+    const mo = parseInt(ev.date_range_start.slice(5, 7), 10);
+    const season = mo <= 2 || mo === 12 ? "Winter" : mo <= 5 ? "Spring" : mo <= 8 ? "Summer" : "Fall";
+    return `~${season} ${year}`;
+  }
+  return `~${year}`;
+}
+
 export default function EventList() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -87,7 +106,7 @@ export default function EventList() {
     <div style={styles.container}>
       <header style={styles.header}>
         <div>
-          <h1 style={styles.title}>Grand Opening Radar</h1>
+          <h1 style={styles.title}>First In Line</h1>
           <p style={styles.subtitle}>Upcoming grand openings in Greenville, SC and beyond</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -156,7 +175,7 @@ export default function EventList() {
                 </td>
                 <td style={styles.td}>{ev.category || "—"}</td>
                 <td style={styles.td}>{ev.event_type}</td>
-                <td style={styles.td}>{formatDate(ev.event_date)}</td>
+                <td style={styles.td}>{formatEventDate(ev)}</td>
                 <td style={styles.td}>{ev.city && ev.state ? `${ev.city}, ${ev.state}` : ev.city || ev.state || "—"}</td>
                 <td style={styles.td}><StatusBadge status={ev.status} /></td>
                 <td style={{ ...styles.td, textAlign: "right" }}>

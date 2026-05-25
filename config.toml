@@ -1,0 +1,313 @@
+# =============================================================================
+# First In Line — runtime configuration
+# =============================================================================
+#
+# This file externalises all tuneable parameters for the ingestion pipeline.
+# Secrets (API keys, database passwords) stay in .env and are NEVER put here.
+#
+# Sections
+# --------
+#   [app]            Application identity (name, version, repo URL).
+#   [llm]            Models, temperature, and token limits for OpenAI calls.
+#   [llm.prompts.*]  System prompt for each LLM call.  Edit freely.
+#   [search]         Query templates, rate-limit, and daily-cap settings.
+#   [worker]         HTTP timeout, retry, and backoff settings.
+#
+# Precedence (highest → lowest)
+# ------------------------------
+# 1. Environment variable (e.g. WORKER_CLASSIFY_MODEL in docker-compose.yml)
+# 2. This file
+# 3. Hardcoded fall-through defaults in code (there should be none after this)
+#
+# Editing prompts
+# ---------------
+# All prompts are plain text inside TOML multiline strings (""" ... """).
+# The first newline after the opening """ is trimmed by TOML, so the text
+# starts on the next line.  No Python escape sequences are interpreted here —
+# what you type is what the model receives.
+#
+# After editing this file, restart the relevant containers:
+#   docker compose restart backend-api worker
+# (No rebuild required — the file is volume-mounted in docker-compose.yml.)
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# App — identity and branding
+# -----------------------------------------------------------------------------
+
+[app]
+name       = "First In Line"
+repo_url   = "https://github.com/Andrerg01/first-in-line"
+
+
+# -----------------------------------------------------------------------------
+# LLM — model selection and sampling parameters
+# -----------------------------------------------------------------------------
+
+[llm]
+
+# Model used by worker classification nodes (relevance + event-count checks).
+# A cheaper/faster model is fine here — these are binary/small-output calls.
+classify_model = "gpt-4o-mini"
+
+# Model used by worker extraction nodes (structured JSON output).
+extract_model = "gpt-4o-mini"
+
+# Model used by the backend manual-ingest endpoint.
+backend_model = "gpt-4o-mini"
+
+# Sampling temperature.  0.0 = fully deterministic / greedy.
+# Raise to 0.2–0.4 if you want more creative date inference.
+temperature = 0.0
+
+# Hard cap on response tokens.  Increase for very long multi-event pages.
+max_tokens = 2048
+
+
+# -----------------------------------------------------------------------------
+# LLM prompts
+# Each sub-section has a single "system" key with the system prompt text.
+# -----------------------------------------------------------------------------
+
+[llm.prompts.relevance]
+system = """
+You are a classifier that determines whether a web page is about an upcoming
+or recent grand opening (or similar: soft opening, ribbon cutting, reopening,
+anniversary opening) of a restaurant, cafe, food truck, brewery, or retail
+business in or near Greenville, SC.
+
+Respond with ONLY a valid JSON object matching this schema:
+{
+  "is_relevant": true or false,
+  "reason": "one-sentence explanation"
+}
+
+Set is_relevant to true ONLY if the page clearly describes an upcoming or
+recent grand-opening event for one of the categories above.  Set it to false
+for general business news, job postings, reviews, menu updates, and anything
+not describing a new opening event.
+"""
+
+[llm.prompts.event_count]
+system = """
+You are a classifier that determines how many distinct grand-opening events
+are described on a web page.
+
+Respond with ONLY a valid JSON object matching this schema:
+{
+  "event_count": "single" | "multi" | "none",
+  "count_estimate": integer (number of events, 0 if none),
+  "reason": "one-sentence explanation"
+}
+
+Use "single" if exactly one business opening is described.
+Use "multi" if two or more distinct businesses or openings are announced.
+Use "none" if no opening event is described (e.g. relevance was miscalculated).
+"""
+
+[llm.prompts.extract_single]
+system = """
+You are an expert at extracting structured information about restaurant, cafe,
+brewery, food truck, and retail grand opening events from web page text.
+
+Extract the single grand opening event described on this page.
+
+Respond with ONLY a valid JSON object matching this schema:
+{
+  "event": {
+    "business_name": "string or null",
+    "event_name": "string or null",
+    "event_type": "grand_opening | soft_opening | ribbon_cutting | reopening | anniversary | unknown",
+    "category": "restaurant | cafe | food_truck | brewery | retail | other | null",
+    "event_date_str": "YYYY-MM-DD or null",
+    "date_confidence": "exact | month | season | year | unknown",
+    "date_range_start": "YYYY-MM-DD or null",
+    "date_range_end": "YYYY-MM-DD or null",
+    "address": "string or null",
+    "city": "string or null",
+    "state": "2-letter US state code or null",
+    "promotion_text": "string or null",
+    "confidence_score": 0.0 to 1.0,
+    "claims": [
+      {
+        "claim_type": "business_name | event_date | address | city | state | promotion | event_type | category | opening_status",
+        "claim_value": "the extracted value",
+        "claim_text": "the exact quote or sentence from the page text"
+      }
+    ]
+  }
+}
+
+For confidence_score: use 0.9+ when the page explicitly names the event,
+date, and location; use 0.5-0.8 for probable but incomplete information;
+use below 0.5 only when heavily inferred.
+
+For date_confidence:
+- "exact": a specific date is stated (e.g. "opens May 15") — set event_date_str to that date.
+- "month": only a month/year is stated (e.g. "opening in June 2026") — set
+  date_range_start to the first of that month and date_range_end to the last day of that month.
+- "season": a season is stated (e.g. "coming summer 2026") — use spring=Mar 1-May 31,
+  summer=Jun 1-Aug 31, fall=Sep 1-Nov 30, winter=Dec 1-Feb 28 (of next year for winter).
+- "year": only a year is stated — set date_range_start=Jan 1 and date_range_end=Dec 31 of that year.
+- "unknown": no date information at all — leave event_date_str, date_range_start,
+  and date_range_end all null.
+"""
+
+[llm.prompts.extract_multi]
+system = """
+You are an expert at extracting structured information about restaurant, cafe,
+brewery, food truck, and retail grand opening events from web page text.
+
+This page describes MULTIPLE grand opening events.  Extract each one.
+
+Respond with ONLY a valid JSON object matching this schema:
+{
+  "events": [
+    {
+      "business_name": "string or null",
+      "event_name": "string or null",
+      "event_type": "grand_opening | soft_opening | ribbon_cutting | reopening | anniversary | unknown",
+      "category": "restaurant | cafe | food_truck | brewery | retail | other | null",
+      "event_date_str": "YYYY-MM-DD or null",
+      "date_confidence": "exact | month | season | year | unknown",
+      "date_range_start": "YYYY-MM-DD or null",
+      "date_range_end": "YYYY-MM-DD or null",
+      "address": "string or null",
+      "city": "string or null",
+      "state": "2-letter US state code or null",
+      "promotion_text": "string or null",
+      "confidence_score": 0.0 to 1.0,
+      "claims": [
+        {
+          "claim_type": "business_name | event_date | address | city | state | promotion | event_type | category | opening_status",
+          "claim_value": "the extracted value",
+          "claim_text": "the exact quote or sentence from the page text"
+        }
+      ]
+    }
+  ]
+}
+
+Include only businesses that have a clearly announced opening event.
+Omit businesses mentioned only in passing.
+
+For date_confidence:
+- "exact": a specific date is stated (e.g. "opens May 15") — set event_date_str to that date.
+- "month": only a month/year is stated (e.g. "opening in June 2026") — set
+  date_range_start to the first of that month and date_range_end to the last day of that month.
+- "season": a season is stated (e.g. "coming summer 2026") — use spring=Mar 1-May 31,
+  summer=Jun 1-Aug 31, fall=Sep 1-Nov 30, winter=Dec 1-Feb 28 (of next year for winter).
+- "year": only a year is stated — set date_range_start=Jan 1 and date_range_end=Dec 31 of that year.
+- "unknown": no date information at all — leave event_date_str, date_range_start,
+  and date_range_end all null.
+"""
+
+[llm.prompts.manual_ingest]
+system = """
+You are an expert at identifying and extracting structured information about
+restaurant, cafe, brewery, food truck, and retail grand opening events from
+web page text.
+
+Given the visible text of a web page, determine whether it describes a grand
+opening (or similar: soft opening, ribbon cutting, reopening, anniversary
+opening) event and extract structured data.
+
+Respond with a valid JSON object matching this schema exactly:
+{
+  "is_relevant": true or false,
+  "business_name": "string or null",
+  "event_name": "string or null",
+  "event_type": "grand_opening | soft_opening | ribbon_cutting | reopening | anniversary | unknown",
+  "category": "restaurant | cafe | food_truck | brewery | retail | other | null",
+  "event_date_str": "YYYY-MM-DD or null",
+  "date_confidence": "exact | month | season | year | unknown",
+  "date_range_start": "YYYY-MM-DD or null",
+  "date_range_end": "YYYY-MM-DD or null",
+  "address": "string or null",
+  "city": "string or null",
+  "state": "2-letter US state code or null",
+  "promotion_text": "string or null",
+  "confidence_score": 0.0 to 1.0,
+  "claims": [
+    {
+      "claim_type": "business_name | event_date | address | city | state | promotion | event_type | category | opening_status",
+      "claim_value": "the extracted value",
+      "claim_text": "the exact quote or sentence from the page text"
+    }
+  ]
+}
+
+Set is_relevant to true only if the page clearly describes an upcoming or
+recent grand opening (or similar) event for a restaurant, cafe, food truck,
+brewery, or retail business.
+
+For date_confidence:
+- "exact": a specific date is stated (e.g. "opens May 15") — set event_date_str to that date.
+- "month": only a month/year is stated (e.g. "opening in June 2026") — set
+  date_range_start to the first of that month and date_range_end to the last day of that month.
+- "season": a season is stated (e.g. "coming summer 2026") — use spring=Mar 1-May 31,
+  summer=Jun 1-Aug 31, fall=Sep 1-Nov 30, winter=Dec 1-Feb 28 (of next year for winter).
+- "year": only a year is stated — set date_range_start=Jan 1 and date_range_end=Dec 31 of that year.
+- "unknown": no date information at all — leave event_date_str, date_range_start,
+  and date_range_end all null.
+"""
+
+
+# -----------------------------------------------------------------------------
+# Search — query templates and rate-limit / cap settings
+# -----------------------------------------------------------------------------
+
+[search]
+
+# Default location used when the worker is not given an explicit override.
+target_location = "Greenville, SC"
+
+# Version tag stored alongside each SearchRun record so you can correlate
+# results to the exact query set that produced them.  Bump this string
+# whenever you change query_templates so historical runs remain auditable.
+query_set_version = "v1"
+
+# Number of search results requested per query.
+max_results_per_query = 10
+
+# Mandatory pause (seconds) between consecutive search API calls.
+# Increase to 5.0+ if hitting DuckDuckGo rate limits.
+rate_limit_seconds = 2.0
+
+# Maximum number of URLs to fetch and process per run (cost cap).
+daily_page_limit = 50
+
+# Maximum number of those pages to pass through the LLM (cost cap).
+# Pages beyond this limit are fetched and stored but not LLM-processed.
+llm_page_limit = 30
+
+# Search query templates.  {location} is substituted at runtime.
+# Add, remove, or tweak these to tune what gets discovered.
+query_templates = [
+    "grand opening restaurant {location}",
+    "new restaurant opening {location}",
+    "new cafe opening {location}",
+    "new brewery opening {location}",
+    "grand opening food truck {location}",
+    "new retail store opening {location}",
+    "opening soon restaurant {location}",
+    "opening soon {location}",
+    "new business opening {location}",
+]
+
+
+# -----------------------------------------------------------------------------
+# Worker — HTTP and retry settings
+# -----------------------------------------------------------------------------
+
+[worker]
+
+# Timeout in seconds for individual HTTP requests to MCP / backend.
+request_timeout = 30.0
+
+# Base delay (seconds) for exponential backoff: wait = backoff_base * 2^attempt
+backoff_base = 1.0
+
+# Total number of attempts before a request is considered failed.
+max_retries = 3

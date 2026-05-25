@@ -21,7 +21,11 @@ async function request(path, options = {}) {
 export function fetchEvents(filters = {}) {
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) {
-    if (v !== undefined && v !== null && v !== "") params.set(k, v);
+    if (Array.isArray(v)) {
+      for (const item of v) params.append(k, item);
+    } else if (v !== undefined && v !== null && v !== "") {
+      params.set(k, v);
+    }
   }
   return request(`/api/events?${params}`);
 }

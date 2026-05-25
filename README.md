@@ -1,6 +1,6 @@
-# Grand Opening Radar
+# First In Line
 
-Grand Opening Radar discovers nearby business grand openings and preserves source evidence, extracted claims, and canonical events — starting with Greenville, SC.
+First In Line discovers nearby business grand openings and preserves source evidence, extracted claims, and canonical events — starting with Greenville, SC.
 
 ## Status
 

@@ -21,8 +21,8 @@ router = APIRouter(prefix="/api/events", tags=["events"])
 def list_events(
     city: str | None = Query(None, description="Filter by city (partial match)"),
     state: str | None = Query(None, description="Filter by state"),
-    status: str | None = Query(None, description="Filter by event status"),
-    category: str | None = Query(None, description="Filter by event category"),
+    status: list[str] | None = Query(None, description="Filter by event status (repeat for multiple)"),
+    category: list[str] | None = Query(None, description="Filter by event category (repeat for multiple)"),
     start_date: date | None = Query(None, description="Filter events on/after date"),
     end_date: date | None = Query(None, description="Filter events on/before date"),
     lat: float | None = Query(None, description="Center latitude for radius search"),
@@ -54,8 +54,8 @@ def list_events(
 def list_events_for_map(
     city: str | None = Query(None, description="Filter by city (partial match)"),
     state: str | None = Query(None, description="Filter by state"),
-    status: str | None = Query(None, description="Filter by event status"),
-    category: str | None = Query(None, description="Filter by event category"),
+    status: list[str] | None = Query(None, description="Filter by event status (repeat for multiple)"),
+    category: list[str] | None = Query(None, description="Filter by event category (repeat for multiple)"),
     start_date: date | None = Query(None, description="Filter events on/after date"),
     end_date: date | None = Query(None, description="Filter events on/before date"),
     lat: float | None = Query(None, description="Center latitude for radius search"),

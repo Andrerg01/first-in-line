@@ -14,7 +14,7 @@ def test_get_queries_returns_list_of_strings():
 def test_default_location_is_greenville_sc():
     queries = get_queries()
     for q in queries:
-        assert "Greenville SC" in q, f"Expected 'Greenville SC' in {q!r}"
+        assert "Greenville" in q and "SC" in q, f"Expected Greenville SC in {q!r}"
 
 
 def test_custom_location_is_substituted():

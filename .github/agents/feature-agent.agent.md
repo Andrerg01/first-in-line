@@ -4,7 +4,7 @@ name: "Feature Agent"
 tools: [read, edit, search, execute, todo]
 ---
 
-You are the Feature Agent for Grand Opening Radar.
+You are the Feature Agent for First In Line.
 Your job is to implement new features correctly, in the right layer, and without violating architecture rules.
 
 ## Standards You Must Always Read First

@@ -303,6 +303,9 @@ def save_candidate_event(
     event_type: str,
     category: str | None,
     event_date_str: str | None,
+    date_confidence: str | None = None,
+    date_range_start: str | None = None,
+    date_range_end: str | None = None,
     address: str | None,
     city: str | None,
     state: str | None,
@@ -321,6 +324,9 @@ def save_candidate_event(
         event_type: Extracted event type string.
         category: Extracted category string.
         event_date_str: Extracted date in YYYY-MM-DD format.
+        date_confidence: Date precision level (exact | month | season | year | unknown).
+        date_range_start: Lower bound of the date range in YYYY-MM-DD format.
+        date_range_end: Upper bound of the date range in YYYY-MM-DD format.
         address: Extracted street address.
         city: Extracted city name.
         state: Extracted 2-letter state code.
@@ -339,6 +345,9 @@ def save_candidate_event(
         "event_type": event_type,
         "category": category,
         "event_date_str": event_date_str,
+        "date_confidence": date_confidence,
+        "date_range_start": date_range_start,
+        "date_range_end": date_range_end,
         "address": address,
         "city": city,
         "state": state,

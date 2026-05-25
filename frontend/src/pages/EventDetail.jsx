@@ -48,6 +48,27 @@ function formatDate(iso) {
   });
 }
 
+function formatDateConfidence(event) {
+  const conf = event.date_confidence;
+  if (!conf || conf === "exact") return null;
+  const labels = {
+    month: "Month (approximate)",
+    season: "Season (approximate)",
+    year: "Year only (approximate)",
+    unknown: "Unknown",
+  };
+  return labels[conf] || conf;
+}
+
+function formatDateRange(event) {
+  if (!event.date_range_start || !event.date_range_end) return null;
+  const fmt = (iso) =>
+    new Date(iso + "T12:00:00").toLocaleDateString("en-US", {
+      month: "short", day: "numeric", year: "numeric",
+    });
+  return `${fmt(event.date_range_start)} – ${fmt(event.date_range_end)}`;
+}
+
 function ClaimsSection({ eventId }) {
   const [claims, setClaims] = useState(null);
   const [error, setError] = useState(null);
@@ -193,7 +214,18 @@ export default function EventDetail() {
         <dl style={styles.fieldGrid}>
           <Field label="Type" value={event.event_type} />
           <Field label="Category" value={event.category} />
-          <Field label="Event Date" value={formatDate(event.event_date)} />
+          {(!event.date_confidence || event.date_confidence === "exact") ? (
+            <Field label="Event Date" value={
+              event.event_date
+                ? new Date(event.event_date + "T12:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+                : null
+            } />
+          ) : (
+            <>
+              <Field label="Date Confidence" value={formatDateConfidence(event)} />
+              <Field label="Estimated Range" value={formatDateRange(event)} />
+            </>
+          )}
           <Field label="Address" value={event.address} />
           <Field label="City" value={event.city} />
           <Field label="State" value={event.state} />

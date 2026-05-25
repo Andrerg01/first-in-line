@@ -12,7 +12,7 @@ import uuid
 from typing import Any
 
 from math import atan2, cos, radians, sin, sqrt
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.events import Event
@@ -23,8 +23,8 @@ def get_events(
     *,
     city: str | None = None,
     state: str | None = None,
-    status: str | None = None,
-    category: str | None = None,
+    status: list[str] | None = None,
+    category: list[str] | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
     lat: float | None = None,
@@ -61,13 +61,38 @@ def get_events(
     if state:
         stmt = stmt.where(Event.state == state)
     if status:
-        stmt = stmt.where(Event.status == status)
+        stmt = stmt.where(Event.status.in_(status))
     if category:
-        stmt = stmt.where(Event.category == category)
-    if start_date:
-        stmt = stmt.where(Event.event_date >= start_date)
-    if end_date:
-        stmt = stmt.where(Event.event_date <= end_date)
+        stmt = stmt.where(Event.category.in_(category))
+    if start_date or end_date:
+        # An event matches if any of its date representations overlap [start_date, end_date].
+        # Range overlap: date_range_end >= start_date AND date_range_start <= end_date.
+        # Exact fallback: event_date falls within [start_date, end_date].
+        if start_date and end_date:
+            range_overlap = and_(
+                or_(Event.date_range_end.is_(None), Event.date_range_end >= start_date),
+                or_(Event.date_range_start.is_(None), Event.date_range_start <= end_date),
+                Event.date_range_start.is_not(None),
+            )
+            exact_match = and_(
+                Event.event_date >= start_date,
+                Event.event_date <= end_date,
+            )
+            stmt = stmt.where(or_(range_overlap, exact_match))
+        elif start_date:
+            stmt = stmt.where(
+                or_(
+                    and_(Event.date_range_end.is_not(None), Event.date_range_end >= start_date),
+                    and_(Event.date_range_end.is_(None), Event.event_date >= start_date),
+                )
+            )
+        else:  # end_date only
+            stmt = stmt.where(
+                or_(
+                    and_(Event.date_range_start.is_not(None), Event.date_range_start <= end_date),
+                    and_(Event.date_range_start.is_(None), Event.event_date <= end_date),
+                )
+            )
 
     should_require_geocoded = geocoded_only or radius_miles is not None
     if should_require_geocoded:

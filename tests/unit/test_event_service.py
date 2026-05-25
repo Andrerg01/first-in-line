@@ -63,7 +63,7 @@ class TestListEvents:
     def test_filters_by_status(self, db_session):
         _make_event(db_session, status="candidate")
         _make_event(db_session, status="verified")
-        result = event_service.list_events(db_session, status="verified")
+        result = event_service.list_events(db_session, status=["verified"])
         assert len(result) == 1
         assert result[0].status == "verified"
 
@@ -75,7 +75,7 @@ class TestListEvents:
     def test_filters_by_category(self, db_session):
         _make_event(db_session, category="cafe")
         _make_event(db_session, category="brewery")
-        result = event_service.list_events(db_session, category="cafe")
+        result = event_service.list_events(db_session, category=["cafe"])
         assert len(result) == 1
         assert result[0].category == "cafe"
 

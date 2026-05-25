@@ -10,9 +10,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { fetchCalendarEvents } from "../api/mapClient";
+import MultiSelectDropdown from "../components/MultiSelectDropdown";
 
-const CATEGORY_OPTIONS = ["", "restaurant", "cafe", "food_truck", "brewery", "retail", "other"];
-const STATUS_OPTIONS = ["", "candidate", "verified", "needs_review", "rejected"];
+const CATEGORY_OPTIONS = ["restaurant", "cafe", "food_truck", "brewery", "retail", "other"];
+const STATUS_OPTIONS = ["candidate", "verified", "needs_review", "rejected"];
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
@@ -52,8 +53,9 @@ export default function CalendarView() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filters, setFilters] = useState({ status: "", category: "" });
-  const [pending, setPending] = useState({ status: "", category: "" });
+  const [filters, setFilters] = useState({ status: [], category: [] });
+  const [pending, setPending] = useState({ status: [], category: [] });
+  const [openUncertainDay, setOpenUncertainDay] = useState(null);
 
   // Build date range covering the displayed month.
   const startDate = makeIsoDate(viewYear, viewMonth, 1);
@@ -63,7 +65,7 @@ export default function CalendarView() {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    fetchCalendarEvents({ ...filters, startDate, endDate, limit: 500 })
+    fetchCalendarEvents({ ...filters, startDate, endDate, limit: 200 })
       .then(setEvents)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -71,13 +73,20 @@ export default function CalendarView() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    if (!openUncertainDay) return;
+    function handleOutside() { setOpenUncertainDay(null); }
+    document.addEventListener("click", handleOutside);
+    return () => document.removeEventListener("click", handleOutside);
+  }, [openUncertainDay]);
+
   function applyFilters(e) {
     e.preventDefault();
     setFilters({ ...pending });
   }
 
   function clearFilters() {
-    const empty = { status: "", category: "" };
+    const empty = { status: [], category: [] };
     setPending(empty);
     setFilters(empty);
   }
@@ -92,14 +101,36 @@ export default function CalendarView() {
     else setViewMonth((m) => m + 1);
   }
 
-  // Index events by ISO date string "YYYY-MM-DD".
+  // Exact events indexed by ISO date; uncertain (range) events grouped separately.
   const byDate = {};
+  const uncertainByDate = {};
   const noDate = [];
+
   for (const event of events) {
-    if (!event.event_date) { noDate.push(event); continue; }
-    const day = event.event_date.slice(0, 10);
-    if (!byDate[day]) byDate[day] = [];
-    byDate[day].push(event);
+    const isUncertain =
+      event.date_confidence &&
+      event.date_confidence !== "exact" &&
+      event.date_range_start &&
+      event.date_range_end;
+
+    if (isUncertain) {
+      const rangeStart = new Date(event.date_range_start);
+      const rangeEnd = new Date(event.date_range_end);
+      for (let d = 1; d <= lastDay; d++) {
+        const iso = makeIsoDate(viewYear, viewMonth, d);
+        const cellDate = new Date(iso);
+        if (cellDate >= rangeStart && cellDate <= rangeEnd) {
+          if (!uncertainByDate[iso]) uncertainByDate[iso] = [];
+          uncertainByDate[iso].push(event);
+        }
+      }
+    } else if (event.event_date) {
+      const day = event.event_date.slice(0, 10);
+      if (!byDate[day]) byDate[day] = [];
+      byDate[day].push(event);
+    } else {
+      noDate.push(event);
+    }
   }
 
   const weeks = buildMonthGrid(viewYear, viewMonth);
@@ -123,18 +154,18 @@ export default function CalendarView() {
 
       {/* Filter bar */}
       <form onSubmit={applyFilters} style={styles.filterBar}>
-        <label style={styles.filterLabel}>
-          Status
-          <select value={pending.status} onChange={(e) => setPending((p) => ({ ...p, status: e.target.value }))} style={styles.select}>
-            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s || "All"}</option>)}
-          </select>
-        </label>
-        <label style={styles.filterLabel}>
-          Category
-          <select value={pending.category} onChange={(e) => setPending((p) => ({ ...p, category: e.target.value }))} style={styles.select}>
-            {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c || "All"}</option>)}
-          </select>
-        </label>
+        <MultiSelectDropdown
+          label="Status"
+          options={STATUS_OPTIONS}
+          selected={pending.status}
+          onChange={(v) => setPending((p) => ({ ...p, status: v }))}
+        />
+        <MultiSelectDropdown
+          label="Category"
+          options={CATEGORY_OPTIONS}
+          selected={pending.category}
+          onChange={(v) => setPending((p) => ({ ...p, category: v }))}
+        />
         <button type="submit" style={styles.applyBtn}>Apply</button>
         <button type="button" onClick={clearFilters} style={styles.clearBtn}>Clear</button>
       </form>
@@ -163,6 +194,7 @@ export default function CalendarView() {
               if (day === null) return <div key={di} style={styles.emptyCell} />;
               const iso = makeIsoDate(viewYear, viewMonth, day);
               const dayEvents = byDate[iso] || [];
+              const dayUncertain = uncertainByDate[iso] || [];
               const isToday = iso === todayIso;
               return (
                 <div key={di} style={{ ...styles.dayCell, ...(isToday ? styles.todayCell : {}) }}>
@@ -180,6 +212,48 @@ export default function CalendarView() {
                       {ev.business_name || "(unnamed)"}
                     </div>
                   ))}
+                  {dayUncertain.length > 0 && (
+                    <div style={{ position: "relative" }}>
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenUncertainDay(openUncertainDay === iso ? null : iso);
+                        }}
+                        style={{
+                          ...styles.eventChip,
+                          background: "repeating-linear-gradient(45deg, #dbeafe, #dbeafe 4px, #fff 4px, #fff 8px)",
+                          fontStyle: "italic",
+                          cursor: "pointer",
+                          userSelect: "none",
+                        }}
+                        title={`${dayUncertain.length} event${dayUncertain.length !== 1 ? "s" : ""} with uncertain dates — click to expand`}
+                      >
+                        ~{dayUncertain.length} uncertain
+                      </div>
+                      {openUncertainDay === iso && (
+                        <div style={styles.uncertainPopover} onClick={(e) => e.stopPropagation()}>
+                          <div style={styles.popoverHeader}>
+                            Uncertain · {dayUncertain.length} event{dayUncertain.length !== 1 ? "s" : ""}
+                          </div>
+                          {dayUncertain.map((ev) => (
+                            <div
+                              key={ev.id}
+                              onClick={() => navigate(`/events/${ev.id}`)}
+                              style={styles.popoverItem}
+                              onMouseEnter={(e) => { e.currentTarget.style.background = "#f0f9ff"; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                              title={`${ev.date_confidence}: ${ev.date_range_start} – ${ev.date_range_end}`}
+                            >
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {ev.business_name || "(unnamed)"}
+                              </span>
+                              <span style={styles.popoverConf}>{ev.date_confidence}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -223,7 +297,7 @@ const styles = {
   dayHeaderRow: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4, paddingTop: 8 },
   dayHeader: { textAlign: "center", fontSize: "0.78rem", fontWeight: 700, color: "#6b7280", textTransform: "uppercase", padding: "4px 0" },
   weekRow: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 },
-  dayCell: { minHeight: 80, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "4px 6px", overflow: "hidden" },
+  dayCell: { minHeight: 80, background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6, padding: "4px 6px", overflow: "visible" },
   emptyCell: { minHeight: 80, background: "#f9fafb", borderRadius: 6 },
   todayCell: { border: "2px solid #2563eb" },
   dayNumber: { fontSize: "0.82rem", fontWeight: 600, color: "#374151", marginBottom: 2 },
@@ -234,4 +308,8 @@ const styles = {
   noDateRow: { padding: "4px 0" },
   noDateLink: { color: "#2563eb", textDecoration: "none", fontWeight: 500, fontSize: "0.9rem" },
   error: { color: "#dc2626", padding: "8px 32px", margin: 0 },
+  uncertainPopover: { position: "absolute", top: "100%", left: 0, zIndex: 200, background: "#fff", border: "1px solid #d1d5db", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.15)", minWidth: 200, maxWidth: 280, padding: "4px 0" },
+  popoverHeader: { fontSize: "0.7rem", fontWeight: 700, color: "#6b7280", padding: "5px 10px 6px", borderBottom: "1px solid #f3f4f6", textTransform: "uppercase", letterSpacing: "0.05em" },
+  popoverItem: { padding: "5px 10px", cursor: "pointer", fontSize: "0.78rem", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, background: "transparent" },
+  popoverConf: { fontSize: "0.68rem", color: "#9ca3af", fontStyle: "italic", flexShrink: 0 },
 };

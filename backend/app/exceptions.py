@@ -1,4 +1,4 @@
-"""Domain exceptions for the Grand Opening Radar ingest pipeline.
+"""Domain exceptions for the First In Line ingest pipeline.
 
 Services raise these; the FastAPI exception handlers in ``main.py`` convert
 them to the appropriate HTTP responses so that the service layer stays
