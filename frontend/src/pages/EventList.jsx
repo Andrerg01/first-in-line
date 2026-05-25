@@ -90,8 +90,12 @@ export default function EventList() {
           <h1 style={styles.title}>Grand Opening Radar</h1>
           <p style={styles.subtitle}>Upcoming grand openings in Greenville, SC and beyond</p>
         </div>
-        <Link to="/admin/ingest" style={styles.ingestLink}>+ Ingest URL</Link>
-        <Link to="/admin/review" style={{ ...styles.ingestLink, marginLeft: 8, background: "#2563eb" }}>Review Queue</Link>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Link to="/map" style={{ ...styles.ingestLink, background: "#374151" }}>Map</Link>
+          <Link to="/calendar" style={{ ...styles.ingestLink, background: "#374151" }}>Calendar</Link>
+          <Link to="/admin/ingest" style={styles.ingestLink}>+ Ingest URL</Link>
+          <Link to="/admin/review" style={{ ...styles.ingestLink, background: "#2563eb" }}>Review Queue</Link>
+        </div>
       </header>
 
       {/* Filters */}

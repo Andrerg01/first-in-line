@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.schemas.claims import EventClaimResponse
-from app.schemas.events import EventDetail, EventListItem, EventStatusUpdate
+from app.schemas.events import EventDetail, EventListItem, EventMapItem, EventStatusUpdate
 from app.schemas.sources import EventSourceResponse
 from app.services import event_service
 
@@ -22,6 +23,11 @@ def list_events(
     state: str | None = Query(None, description="Filter by state"),
     status: str | None = Query(None, description="Filter by event status"),
     category: str | None = Query(None, description="Filter by event category"),
+    start_date: date | None = Query(None, description="Filter events on/after date"),
+    end_date: date | None = Query(None, description="Filter events on/before date"),
+    lat: float | None = Query(None, description="Center latitude for radius search"),
+    lon: float | None = Query(None, description="Center longitude for radius search"),
+    radius_miles: float | None = Query(None, gt=0, description="Radius in miles"),
     limit: int = Query(50, ge=1, le=200, description="Page size"),
     offset: int = Query(0, ge=0, description="Page offset"),
     db: Session = Depends(get_db),
@@ -33,10 +39,49 @@ def list_events(
         state=state,
         status=status,
         category=category,
+        start_date=start_date,
+        end_date=end_date,
+        lat=lat,
+        lon=lon,
+        radius_miles=radius_miles,
         limit=limit,
         offset=offset,
     )
     return [EventListItem.model_validate(e) for e in events]
+
+
+@router.get("/map", response_model=list[EventMapItem])
+def list_events_for_map(
+    city: str | None = Query(None, description="Filter by city (partial match)"),
+    state: str | None = Query(None, description="Filter by state"),
+    status: str | None = Query(None, description="Filter by event status"),
+    category: str | None = Query(None, description="Filter by event category"),
+    start_date: date | None = Query(None, description="Filter events on/after date"),
+    end_date: date | None = Query(None, description="Filter events on/before date"),
+    lat: float | None = Query(None, description="Center latitude for radius search"),
+    lon: float | None = Query(None, description="Center longitude for radius search"),
+    radius_miles: float | None = Query(None, gt=0, description="Radius in miles"),
+    limit: int = Query(200, ge=1, le=500, description="Maximum pin count"),
+    offset: int = Query(0, ge=0, description="Page offset"),
+    db: Session = Depends(get_db),
+) -> list[EventMapItem]:
+    """Return map-ready events with non-null coordinates."""
+    events = event_service.list_events(
+        db,
+        city=city,
+        state=state,
+        status=status,
+        category=category,
+        start_date=start_date,
+        end_date=end_date,
+        lat=lat,
+        lon=lon,
+        radius_miles=radius_miles,
+        geocoded_only=True,
+        limit=min(limit, 200),
+        offset=offset,
+    )
+    return [EventMapItem.model_validate(e) for e in events]
 
 
 @router.get("/{event_id}", response_model=EventDetail)
