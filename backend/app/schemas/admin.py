@@ -101,3 +101,11 @@ class RetroactiveDedupResponse(BaseModel):
     flagged: int
     cleared: int
     message: str
+
+
+class GeocodeRunResponse(BaseModel):
+    """Response for POST /api/admin/geocode/run."""
+
+    attempted: int
+    geocoded: int
+    skipped: int

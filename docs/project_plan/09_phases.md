@@ -284,7 +284,11 @@ Every LLM call has a llm_calls row with token counts and estimated cost
 
 ---
 
-## Phase 6 — Duplicate Handling and Review Queue
+## Phase 6 — Duplicate Handling and Review Queue ✅ COMPLETE
+
+## Status
+
+**Completed.** 311 tests passing. VERSION `0.7.0`.
 
 ## Goal
 
@@ -325,7 +329,24 @@ Canonical event can be edited/verified
 
 ---
 
-## Phase 7 — Map and Calendar Views
+## Phase 7 — Map and Calendar Views ✅ COMPLETE
+
+## Status
+
+**Completed.** 331 tests passing. VERSION `0.8.1`.
+
+Delivered:
+- Date range filters (`start_date`, `end_date`) and geo filters (`lat`, `lon`,
+  `radius_miles`, `geocoded_only`) on `GET /api/events`.
+- `GET /api/events/map` endpoint returning geocoded pins (`EventMapItem`).
+- `POST /api/admin/geocode/run` bulk geocode endpoint (`GeocodeRunResponse`).
+- MCP `geo.geocode_address` tool — Nominatim (1 req/sec, ToS-compliant) or stub;
+  extracted to `mcp_server/app/tools/geocode.py` (modular).
+- Backend `geocode_service.py` — per-event and bulk geocoding; auto-geocode hook
+  in ingest pipeline (best-effort, non-fatal).
+- React `MapView` — Leaflet/OSM map with event pins, popups, status/category/date filters.
+- React `CalendarView` — month grid, event chips, prev/next nav, no-date section.
+- `/map` and `/calendar` routes; nav links added to `EventList` header.
 
 ## Goal
 

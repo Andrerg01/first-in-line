@@ -7,9 +7,11 @@ directly; they call this module instead.
 
 from __future__ import annotations
 
+from datetime import date
 import uuid
 from typing import Any
 
+from math import atan2, cos, radians, sin, sqrt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -23,6 +25,12 @@ def get_events(
     state: str | None = None,
     status: str | None = None,
     category: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    lat: float | None = None,
+    lon: float | None = None,
+    radius_miles: float | None = None,
+    geocoded_only: bool = False,
     limit: int = 50,
     offset: int = 0,
 ) -> list[Event]:
@@ -34,6 +42,12 @@ def get_events(
         state: Filter by exact state code or name.
         status: Filter by event status value.
         category: Filter by event category value.
+        start_date: Filter to events on or after this date.
+        end_date: Filter to events on or before this date.
+        lat: Center latitude used for radius filtering.
+        lon: Center longitude used for radius filtering.
+        radius_miles: Radius used for distance filtering.
+        geocoded_only: When true, include only events with lat/lon.
         limit: Maximum number of rows to return.
         offset: Number of rows to skip (for pagination).
 
@@ -50,9 +64,54 @@ def get_events(
         stmt = stmt.where(Event.status == status)
     if category:
         stmt = stmt.where(Event.category == category)
+    if start_date:
+        stmt = stmt.where(Event.event_date >= start_date)
+    if end_date:
+        stmt = stmt.where(Event.event_date <= end_date)
 
-    stmt = stmt.order_by(Event.created_at.desc()).limit(limit).offset(offset)
-    return list(db.scalars(stmt).all())
+    should_require_geocoded = geocoded_only or radius_miles is not None
+    if should_require_geocoded:
+        stmt = stmt.where(Event.lat.is_not(None), Event.lon.is_not(None))
+
+    ordered_stmt = stmt.order_by(Event.created_at.desc())
+
+    if radius_miles is None:
+        paged_stmt = ordered_stmt.limit(limit).offset(offset)
+        return list(db.scalars(paged_stmt).all())
+
+    events = list(db.scalars(ordered_stmt).all())
+    filtered = [
+        event
+        for event in events
+        if _distance_miles(
+            lat,
+            lon,
+            float(event.lat),
+            float(event.lon),
+        )
+        <= radius_miles
+    ]
+    return filtered[offset : offset + limit]
+
+
+def _distance_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Return great-circle distance between two points in miles."""
+    earth_radius_miles = 3958.8
+
+    lat1_rad = radians(lat1)
+    lon1_rad = radians(lon1)
+    lat2_rad = radians(lat2)
+    lon2_rad = radians(lon2)
+
+    delta_lat = lat2_rad - lat1_rad
+    delta_lon = lon2_rad - lon1_rad
+
+    a = (
+        sin(delta_lat / 2) ** 2
+        + cos(lat1_rad) * cos(lat2_rad) * sin(delta_lon / 2) ** 2
+    )
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return earth_radius_miles * c
 
 
 def get_event_by_id(db: Session, event_id: uuid.UUID) -> Event | None:
@@ -142,4 +201,50 @@ def list_events_pointing_to_duplicate_target(
         A list of ``Event`` instances whose ``duplicate_of_id`` matches.
     """
     stmt = select(Event).where(Event.duplicate_of_id == duplicate_of_id)
+    return list(db.scalars(stmt).all())
+
+
+def update_event_geo(
+    db: Session,
+    event: Event,
+    *,
+    lat: float,
+    lon: float,
+) -> Event:
+    """Update the lat/lon coordinates on an event and flush.
+
+    Args:
+        db: Active database session.
+        event: The ``Event`` ORM instance to update.
+        lat: Latitude in decimal degrees.
+        lon: Longitude in decimal degrees.
+
+    Returns:
+        The updated ``Event`` instance.
+    """
+    event.lat = lat
+    event.lon = lon
+    db.flush()
+    return event
+
+
+def get_ungeocoded_events(db: Session, *, limit: int = 500) -> list[Event]:
+    """Return events that have address information but no lat/lon.
+
+    Args:
+        db: Active database session.
+        limit: Maximum number of events to return.
+
+    Returns:
+        A list of ``Event`` instances without geocoordinates.
+    """
+    stmt = (
+        select(Event)
+        .where(
+            Event.lat.is_(None),
+            (Event.address.is_not(None)) | (Event.city.is_not(None)),
+        )
+        .order_by(Event.created_at.asc())
+        .limit(limit)
+    )
     return list(db.scalars(stmt).all())

@@ -7,9 +7,11 @@ rather than in the router or repository.
 
 from __future__ import annotations
 
+from datetime import date
 import uuid
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
+from fastapi import status as http_status
 from sqlalchemy.orm import Session
 
 from app.models.claims import EventClaim
@@ -25,6 +27,12 @@ def list_events(
     state: str | None = None,
     status: str | None = None,
     category: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    lat: float | None = None,
+    lon: float | None = None,
+    radius_miles: float | None = None,
+    geocoded_only: bool = False,
     limit: int = 50,
     offset: int = 0,
 ) -> list[Event]:
@@ -36,19 +44,47 @@ def list_events(
         state: Optional state filter (exact match).
         status: Optional event status filter.
         category: Optional category filter.
+        start_date: Optional lower-bound event date filter.
+        end_date: Optional upper-bound event date filter.
+        lat: Optional center latitude for radius filtering.
+        lon: Optional center longitude for radius filtering.
+        radius_miles: Optional radius for geo filtering.
+        geocoded_only: When true, return only events with lat/lon.
         limit: Page size, capped at 200.
         offset: Page offset.
 
     Returns:
         A list of ``Event`` instances.
+
+    Raises:
+        HTTPException: 422 when date or geo filter combinations are invalid.
     """
     limit = min(limit, 200)
+
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="start_date must be on or before end_date.",
+        )
+
+    if radius_miles is not None and (lat is None or lon is None):
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="lat and lon are required when radius_miles is provided.",
+        )
+
     return event_repository.get_events(
         db,
         city=city,
         state=state,
         status=status,
         category=category,
+        start_date=start_date,
+        end_date=end_date,
+        lat=lat,
+        lon=lon,
+        radius_miles=radius_miles,
+        geocoded_only=geocoded_only,
         limit=limit,
         offset=offset,
     )
@@ -70,7 +106,7 @@ def get_event_detail(db: Session, event_id: uuid.UUID) -> Event:
     event = event_repository.get_event_by_id(db, event_id)
     if event is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail=f"Event {event_id} not found.",
         )
     return event

@@ -12,8 +12,9 @@ Grand Opening Radar discovers nearby business grand openings and preserves sourc
 | 3 | Manual URL ingestion — AdminIngest page, OpenAI extraction pipeline | ✅ Complete |
 | 4 | Scheduled worker — search → fetch → dedupe → telemetry pipeline | ✅ Complete |
 | 5 | LangGraph extraction pipeline — classify, extract, multi-event, LLM call logging | ✅ Complete |
-| 6 | Duplicate handling and review queue improvements | ✅ In Progress |
-| 7+ | Map/calendar, CI/CD, notifications | Planned |
+| 6 | Duplicate handling and review queue improvements | ✅ Complete |
+| 7 | Map/calendar views, geocoding pipeline, date/radius filters | ✅ Complete |
+| 8+ | CI/CD, cloud deployment, notifications | Planned |
 
 Current version: see `VERSION` file.
 
@@ -126,6 +127,7 @@ python -m worker.app.cli run_once
 | `SCRAPER_LLM_PAGE_LIMIT` | `30` | Max pages to send through the LLM extraction pipeline per run |
 | `SEARCH_PROVIDER` | `duckduckgo` | Search backend: `duckduckgo`, `brave`, `duckduckgo+brave`, or `stub` |
 | `BRAVE_SEARCH_API_KEY` | _(none)_ | API key for Brave Search; required when `SEARCH_PROVIDER` includes `brave` |
+| `GEOCODE_PROVIDER` | `nominatim` | Geocoding backend: `nominatim` (Nominatim OSM, no key) or `stub` (testing) |
 
 ## Pages
 
@@ -133,9 +135,23 @@ python -m worker.app.cli run_once
 |-------|-------------|
 | `/` | Event list with filters |
 | `/events/:id` | Event detail with sources and claims |
+| `/map` | Leaflet map with geocoded event pins and filters |
+| `/calendar` | Month calendar with event chips |
 | `/admin/ingest` | Paste a URL to trigger manual ingestion |
 | `/admin/review` | Review queue with duplicate merge workflow |
 | `/admin/events/:id` | Verify / reject a candidate event |
+
+## Phase 7 Map, Calendar, and Geocoding
+
+Phase 7 adds spatial and temporal discovery:
+
+- **Map view** (`/map`) — Leaflet/OSM map with geocoded event pins; filters for status, category, and date range.
+- **Calendar view** (`/calendar`) — month grid with event chips; prev/next navigation.
+- **Geocoding pipeline** — MCP `geo.geocode_address` tool (Nominatim OSM, free, no key required; 1 req/sec ToS respected).  `GEOCODE_PROVIDER=stub` for offline testing.
+  - Auto-geocode on event save (best-effort, non-fatal).
+  - Bulk geocode: `POST /api/admin/geocode/run`.
+- **Date and geo filters** on `GET /api/events`: `start_date`, `end_date`, `lat`, `lon`, `radius_miles`, `geocoded_only`.
+- **Map endpoint**: `GET /api/events/map` — geocoded events only, capped at 200 pins.
 
 ## Phase 6 Duplicate Handling
 

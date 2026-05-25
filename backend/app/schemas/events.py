@@ -36,6 +36,28 @@ class EventStatusUpdate(BaseModel):
     status: Literal["candidate", "verified", "rejected", "needs_review", "merged", "expired"]
 
 
+class EventMapItem(BaseModel):
+    """Event representation optimized for map pin rendering."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    business_name: str | None
+    event_name: str | None
+    category: str | None
+    event_date: datetime | None
+    address: str | None
+    city: str | None
+    state: str | None
+    status: str
+    confidence_score: float | None
+    possible_duplicate: bool
+    lat: float
+    lon: float
+    created_at: datetime
+    updated_at: datetime
+
+
 class EventDetail(BaseModel):
     """Full event detail returned by the single-event endpoint."""
 

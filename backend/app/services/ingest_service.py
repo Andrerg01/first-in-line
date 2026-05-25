@@ -36,6 +36,7 @@ from app.repositories import (
     source_repository,
     telemetry_repository,
 )
+from app.services import geocode_service
 from app.schemas.ingest import (
     CandidateEventCreate,
     CandidateEventResult,
@@ -513,6 +514,14 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
 
     db.commit()  # commits event, claims, event_source, processing_decision
 
+    # 9. Best-effort geocode (non-fatal) ----------------------------------
+    if event:
+        try:
+            geocode_service.geocode_event(db, event)
+            db.commit()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Auto-geocode failed for event %s: %s", event.id, exc)
+
     return ManualIngestResponse(
         source_id=source_doc.id,
         duplicate=False,
@@ -892,6 +901,14 @@ def save_candidate_event(
         event.id,
         source_document_id,
     )
+
+    # Best-effort geocode (non-fatal) ------------------------------------
+    try:
+        geocode_service.geocode_event(db, event)
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Auto-geocode failed for event %s: %s", event.id, exc)
+
     return CandidateEventResult(
         event_id=event.id,
         created=True,

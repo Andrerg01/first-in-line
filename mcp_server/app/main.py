@@ -1,12 +1,12 @@
 """MCP server — exposes the approved narrow-tool catalog as HTTP endpoints.
 
-Tools implemented in this module:
+Tools implemented in this module and sub-modules:
 - web.fetch_page    — fetch a URL and extract visible text
 - web.normalize_text — normalize and SHA-256 hash visible text
 - web.search        — search the web and return ranked URL results
+- geo.geocode_address — geocode an address string (see tools/geocode.py)
 
-Future tools (LangGraph Phase 5):
-- geo.geocode_address
+Future tools:
 - db.find_source_by_hash
 - db.find_similar_events
 """
@@ -28,22 +28,25 @@ from duckduckgo_search import DDGS
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
+from mcp_server.app.tools.geocode import router as geocode_router
+
 log = logging.getLogger(__name__)
 
 app = FastAPI(title="Grand Opening Radar MCP Server", version="0.1.0")
+app.include_router(geocode_router)
 
 # Tools currently implemented and callable
 TOOL_LIST = [
     "web.fetch_page",
     "web.normalize_text",
     "web.search",
+    "geo.geocode_address",
 ]
 
 # Planned tools — not yet implemented; kept here to document the roadmap.
 # NOTE: MCP tools must be read-only or bounded narrow writes; any event
 # creation/modification must go through the backend API, not MCP directly.
 _PLANNED_TOOLS = [
-    "geo.geocode_address",
     "db.find_source_by_hash",
     "db.find_similar_events",
 ]
@@ -710,3 +713,6 @@ def web_search(body: SearchRequest) -> SearchResponse:
         body.query, provider, len(results),
     )
     return SearchResponse(query=body.query, provider=provider, results=results)
+
+
+# Geocode tool is in mcp_server/app/tools/geocode.py — registered above via app.include_router.

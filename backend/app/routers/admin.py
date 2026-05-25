@@ -13,12 +13,13 @@ from app.schemas.admin import (
     ConflictSide,
     DuplicateFlagRequest,
     DuplicateFlagResponse,
+    GeocodeRunResponse,
     MergeRequest,
     MergeResponse,
     RetroactiveDedupResponse,
 )
 from app.schemas.events import EventListItem
-from app.services import dedup_service, event_service
+from app.services import dedup_service, event_service, geocode_service
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -176,4 +177,23 @@ def run_retroactive_dedup(db: Session = Depends(get_db)) -> RetroactiveDedupResp
         cleared=result["cleared"],
         message="Retroactive duplicate scan completed.",
     )
+
+
+@router.post("/geocode/run", response_model=GeocodeRunResponse)
+def run_bulk_geocode(db: Session = Depends(get_db)) -> GeocodeRunResponse:
+    """Geocode all events that are missing lat/lon coordinates.
+
+    Scans events with address/city information but no geocoordinates and
+    calls the MCP ``geo.geocode_address`` tool for each one.  The operation
+    is best-effort: individual geocode failures do not abort the run.
+
+    Args:
+        db: Injected database session.
+
+    Returns:
+        ``GeocodeRunResponse`` with ``attempted``, ``geocoded``, and ``skipped`` counts.
+    """
+    result = geocode_service.geocode_ungeocoded_events(db)
+    db.commit()
+    return GeocodeRunResponse(**result)
 
