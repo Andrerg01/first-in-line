@@ -2,6 +2,7 @@
 import argparse
 
 from worker.app import pipeline
+from worker.app.app_config import app_config
 from worker.app.logger import configure_logging
 
 
@@ -64,7 +65,7 @@ def main() -> int:
     Returns:
         Integer exit code (0 = success).
     """
-    parser = argparse.ArgumentParser(description="Grand Opening Radar worker")
+    parser = argparse.ArgumentParser(description=f"{app_config.meta.name} worker")
     parser.add_argument(
         "--log-level",
         default="INFO",

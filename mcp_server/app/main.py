@@ -32,7 +32,7 @@ from .tools.geocode import router as geocode_router
 
 log = logging.getLogger(__name__)
 
-app = FastAPI(title="Grand Opening Radar MCP Server", version="0.1.0")
+app = FastAPI(title="First In Line MCP Server", version="0.1.0")
 app.include_router(geocode_router)
 
 # Tools currently implemented and callable
@@ -186,6 +186,7 @@ def _is_safe_url(url: str) -> tuple[bool, str]:
             or addr.is_link_local
             or addr.is_reserved
             or addr.is_multicast
+            or addr.is_unspecified
         ):
             return False, f"IP '{host}' resolves to a private/reserved range."
     except ValueError:
@@ -206,6 +207,7 @@ def _is_safe_url(url: str) -> tuple[bool, str]:
                     or resolved_addr.is_link_local
                     or resolved_addr.is_reserved
                     or resolved_addr.is_multicast
+                    or resolved_addr.is_unspecified
                 ):
                     return (
                         False,
@@ -371,7 +373,7 @@ def fetch_page(body: FetchPageRequest) -> FetchPageResponse:
 
     headers = {
         "User-Agent": (
-            "GrandOpeningRadar/0.1 (+https://github.com/Andrerg01/grand-opening-radar)"
+            "FirstInLine/0.1 (+https://github.com/Andrerg01/first-in-line)"
         ),
         "Accept": "text/html,application/xhtml+xml",
     }

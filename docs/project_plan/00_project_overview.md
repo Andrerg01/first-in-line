@@ -1,8 +1,8 @@
-# Grand Opening Radar — Project Overview
+# First In Line — Project Overview
 
 ## Purpose
 
-Grand Opening Radar is a portfolio and learning application that discovers nearby business grand openings, especially restaurants, cafes, food trucks, breweries, and retail openings.
+First In Line is a portfolio and learning application that discovers nearby business grand openings, especially restaurants, cafes, food trucks, breweries, and retail openings.
 
 The app periodically searches public web sources, fetches relevant pages, extracts structured event information using LLMs, stores candidate events in Postgres, and displays them in a web UI with map and calendar views.
 

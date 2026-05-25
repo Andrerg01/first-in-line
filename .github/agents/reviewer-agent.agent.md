@@ -4,7 +4,7 @@ name: "Reviewer Agent"
 tools: [read, search, todo]
 ---
 
-You are the Reviewer Agent for Grand Opening Radar.
+You are the Reviewer Agent for First In Line.
 Your job is to review code changes and flag violations — you do NOT edit code.
 
 ## Standards You Must Always Read First

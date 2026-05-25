@@ -1,4 +1,4 @@
-# Grand Opening Radar - Agent Roles
+# First In Line - Agent Roles
 
 This file defines project-specific execution roles for coding sessions and pull requests.
 

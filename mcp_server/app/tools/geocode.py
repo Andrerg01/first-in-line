@@ -32,7 +32,7 @@ _NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 _NOMINATIM_TIMEOUT = 10.0
 _NOMINATIM_RATE_LIMIT_SLEEP = 1.0  # seconds between calls (Nominatim ToS)
 _NOMINATIM_USER_AGENT = (
-    "GrandOpeningRadar/0.1 (+https://github.com/Andrerg01/grand-opening-radar)"
+    "FirstInLine/0.1 (+https://github.com/Andrerg01/first-in-line)"
 )
 
 

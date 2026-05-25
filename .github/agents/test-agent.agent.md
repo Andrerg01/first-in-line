@@ -4,7 +4,7 @@ name: "Test Agent"
 tools: [read, edit, search, execute, todo]
 ---
 
-You are the Test Agent for Grand Opening Radar.
+You are the Test Agent for First In Line.
 Your job is to write targeted, high-value tests and make failure messages actionable.
 
 ## Standards You Must Always Read First

@@ -115,7 +115,7 @@ def run_once(*, dry_run: bool = False) -> RunSummary:
     collector = TelemetryCollector()
 
     _p(_DIVIDER)
-    _p("  Grand Opening Radar -- Discovery Run")
+    _p("  First In Line -- Discovery Run")
     _p(f"  Location : {settings.target_location}")
     _p(f"  Queries  : {len(queries)}  |  URL cap: {settings.max_urls_per_run}  |  Dry run: {'Yes' if dry_run else 'No'}")
     _p(_DIVIDER)

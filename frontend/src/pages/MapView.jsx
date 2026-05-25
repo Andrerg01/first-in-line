@@ -11,6 +11,7 @@ import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { fetchMapEvents } from "../api/mapClient";
+import MultiSelectDropdown from "../components/MultiSelectDropdown";
 
 // Leaflet default marker icons are broken in bundled environments;
 // point them at the CDN copies so they always resolve.
@@ -21,48 +22,77 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://unpkg.com/leaflet@1/dist/images/marker-shadow.png",
 });
 
-const STATUS_OPTIONS = ["", "candidate", "verified", "needs_review", "rejected"];
-const CATEGORY_OPTIONS = ["", "restaurant", "cafe", "food_truck", "brewery", "retail", "other"];
+const STATUS_OPTIONS = ["candidate", "verified", "needs_review", "rejected"];
+const CATEGORY_OPTIONS = ["restaurant", "cafe", "food_truck", "brewery", "retail", "other"];
 
-const STATUS_COLORS = {
-  candidate: "#e8f4fd",
-  verified: "#e9f7ef",
-  rejected: "#fdecea",
-  needs_review: "#fff8e1",
-  expired: "#f5f5f5",
+const PIN_COLORS = {
+  verified: "#16a34a",
+  candidate: "#2563eb",
+  needs_review: "#d97706",
+  rejected: "#dc2626",
 };
 
-const STATUS_BORDER = {
-  candidate: "#90caf9",
-  verified: "#9fd2b2",
-  rejected: "#ef9a9a",
-  needs_review: "#ffe082",
-  expired: "#bdbdbd",
+const PIN_LABEL = {
+  verified: "Verified",
+  candidate: "Candidate",
+  needs_review: "Needs Review",
+  rejected: "Rejected",
 };
 
-function StatusBadge({ status }) {
-  return (
-    <span style={{
-      display: "inline-block",
-      padding: "2px 10px",
-      borderRadius: "999px",
-      fontSize: "0.78rem",
-      background: STATUS_COLORS[status] || "#f5f5f5",
-      border: `1px solid ${STATUS_BORDER[status] || "#ccc"}`,
-      textTransform: "uppercase",
-      letterSpacing: "0.04em",
-      fontWeight: 600,
-    }}>
-      {status}
-    </span>
-  );
+function makePinIcon(status) {
+  const color = PIN_COLORS[status] || "#6b7280";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 25 41" width="25" height="41">
+    <path d="M12.5 0C5.6 0 0 5.6 0 12.5 0 21.9 12.5 41 12.5 41S25 21.9 25 12.5C25 5.6 19.4 0 12.5 0z" fill="${color}" stroke="white" stroke-width="1.5"/>
+    <circle cx="12.5" cy="12.5" r="5" fill="white"/>
+  </svg>`;
+  return L.divIcon({
+    html: svg,
+    className: "",
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -38],
+  });
 }
 
-function formatDate(iso) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-US", {
-    year: "numeric", month: "short", day: "numeric",
-  });
+function formatPopupDate(event) {
+  const confidence = event.date_confidence;
+  if (!confidence || confidence === "exact") {
+    if (!event.event_date) return null;
+    const d = new Date(event.event_date + "T12:00:00");
+    return { label: "Event Date", value: d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) };
+  }
+  const start = event.date_range_start;
+  const end = event.date_range_end;
+  if (!start && !end) return null;
+  const fmt = (iso) => new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  if (start && end && start === end) {
+    return { label: "Event Date", value: fmt(start) };
+  }
+  const parts = [];
+  if (start) parts.push(fmt(start));
+  if (end) parts.push(fmt(end));
+  const rangeStr = parts.length === 2 ? `${parts[0]} – ${parts[1]}` : parts[0];
+  const confLabel = confidence === "month" ? "±month" : confidence === "year" ? "±year" : confidence === "season" ? "±season" : "~";
+  return { label: "Est. Range", value: `${confLabel}  ${rangeStr}` };
+}
+
+function MapLegend() {
+  return (
+    <div style={{
+      position: "absolute", bottom: 28, right: 12, zIndex: 1000,
+      background: "rgba(255,255,255,0.95)", borderRadius: 8,
+      padding: "10px 14px", boxShadow: "0 2px 8px rgba(0,0,0,0.18)",
+      fontSize: "0.8rem", lineHeight: 1.8, pointerEvents: "none",
+    }}>
+      <div style={{ fontWeight: 700, marginBottom: 4, color: "#111" }}>Status</div>
+      {Object.entries(PIN_COLORS).map(([status, color]) => (
+        <div key={status} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ display: "inline-block", width: 12, height: 12, borderRadius: "50%", background: color, flexShrink: 0 }} />
+          <span style={{ color: "#374151" }}>{PIN_LABEL[status]}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function todayIso() {
@@ -75,7 +105,7 @@ function oneMonthFromNowIso() {
   return d.toISOString().split("T")[0];
 }
 
-const DEFAULT_FILTERS = { status: "", category: "", startDate: todayIso(), endDate: oneMonthFromNowIso() };
+const DEFAULT_FILTERS = { status: [], category: [], startDate: todayIso(), endDate: oneMonthFromNowIso() };
 
 export default function MapView() {
   const [events, setEvents] = useState([]);
@@ -127,18 +157,18 @@ export default function MapView() {
       </header>
 
       <form onSubmit={applyFilters} style={styles.filterBar}>
-        <label style={styles.filterLabel}>
-          Status
-          <select value={pending.status} onChange={(e) => setPending((p) => ({ ...p, status: e.target.value }))} style={styles.select}>
-            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s || "All"}</option>)}
-          </select>
-        </label>
-        <label style={styles.filterLabel}>
-          Category
-          <select value={pending.category} onChange={(e) => setPending((p) => ({ ...p, category: e.target.value }))} style={styles.select}>
-            {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c || "All"}</option>)}
-          </select>
-        </label>
+        <MultiSelectDropdown
+          label="Status"
+          options={STATUS_OPTIONS}
+          selected={pending.status}
+          onChange={(v) => setPending((p) => ({ ...p, status: v }))}
+        />
+        <MultiSelectDropdown
+          label="Category"
+          options={CATEGORY_OPTIONS}
+          selected={pending.category}
+          onChange={(v) => setPending((p) => ({ ...p, category: v }))}
+        />
         <label style={styles.filterLabel}>
           From
           <input type="date" value={pending.startDate} onChange={(e) => setPending((p) => ({ ...p, startDate: e.target.value }))} style={styles.select} />
@@ -164,18 +194,25 @@ export default function MapView() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           {events.map((event) => (
-            <Marker key={event.id} position={[event.lat, event.lon]}>
+            <Marker key={event.id} position={[event.lat, event.lon]} icon={makePinIcon(event.status)}>
               <Popup>
                 <div style={{ minWidth: 180 }}>
                   <strong style={{ fontSize: "0.95rem" }}>{event.business_name || "(unnamed)"}</strong>
-                  <div style={{ marginTop: 4 }}>
-                    <StatusBadge status={event.status} />
-                  </div>
-                  {event.event_date && (
-                    <div style={{ marginTop: 4, fontSize: "0.85rem", color: "#555" }}>
-                      {formatDate(event.event_date)}
-                    </div>
+                  {event.category && (
+                    <div style={{ marginTop: 2, fontSize: "0.78rem", color: "#6b7280", textTransform: "capitalize" }}>{event.category.replace("_", " ")}</div>
                   )}
+                  <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: PIN_COLORS[event.status] || "#6b7280", display: "inline-block", flexShrink: 0 }} />
+                    <span style={{ fontSize: "0.8rem", color: "#374151", textTransform: "capitalize" }}>{PIN_LABEL[event.status] || event.status}</span>
+                  </div>
+                  {(() => {
+                    const d = formatPopupDate(event);
+                    return d ? (
+                      <div style={{ marginTop: 4, fontSize: "0.85rem", color: "#555" }}>
+                        <span style={{ fontWeight: 600 }}>{d.label}:</span> {d.value}
+                      </div>
+                    ) : null;
+                  })()}
                   {event.address && (
                     <div style={{ marginTop: 2, fontSize: "0.82rem", color: "#666" }}>{event.address}</div>
                   )}
@@ -189,6 +226,7 @@ export default function MapView() {
             </Marker>
           ))}
         </MapContainer>
+        <MapLegend />
       </div>
 
       {!loading && events.length === 0 && !error && (

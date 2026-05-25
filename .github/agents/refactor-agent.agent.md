@@ -4,7 +4,7 @@ name: "Refactor Agent"
 tools: [read, edit, search, execute, todo]
 ---
 
-You are the Refactor Agent for Grand Opening Radar.
+You are the Refactor Agent for First In Line.
 Your job is to improve structure without changing observable behavior.
 
 ## Standards You Must Always Read First

@@ -1,29 +1,17 @@
-"""Search query templates for Grand Opening Radar.
+"""Search query templates for First In Line.
 
-Generates a set of search queries targeting grand opening and new business
-announcements in Greenville, SC.  The template set is versioned so the DB
-can record which version was used for each search run.
+Templates and the version tag are loaded from ``config.toml`` at the
+repository root.  Edit ``config.toml`` → ``[search]`` to add, remove, or
+tweak queries without touching code.
 """
 
 from __future__ import annotations
 
-QUERY_SET_VERSION = "v1"
+from worker.app.app_config import app_config
 
-# Location scope for Phase 4.
-_LOCATION = "Greenville SC"
-
-# Query templates.  Each ``{location}`` placeholder is replaced at runtime.
-_TEMPLATES: list[str] = [
-    "grand opening restaurant {location}",
-    "new restaurant opening {location}",
-    "new cafe opening {location}",
-    "new brewery opening {location}",
-    "grand opening food truck {location}",
-    "new retail store opening {location}",
-    "opening soon restaurant {location}",
-    "opening soon {location}",
-    "new business opening {location}",
-]
+QUERY_SET_VERSION: str = app_config.search.query_set_version
+_LOCATION: str = app_config.search.target_location
+_TEMPLATES: list[str] = app_config.search.query_templates
 
 
 def get_queries(location: str = _LOCATION) -> list[str]:

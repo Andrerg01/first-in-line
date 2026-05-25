@@ -58,10 +58,10 @@ through ingress routing, or an environment-specific API URL.
 Preferred ingress pattern:
 
 ```text
-https://grandopeningradar.com/
+https://firstinline.app/
   -> frontend service
 
-https://grandopeningradar.com/api/*
+https://firstinline.app/api/*
   -> backend-api service
 ```
 

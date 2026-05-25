@@ -23,7 +23,7 @@ import time
 from typing import Any
 
 from openai import OpenAI
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from worker.app.extraction.prompts import (
     EVENT_COUNT_SYSTEM_PROMPT,
@@ -31,7 +31,6 @@ from worker.app.extraction.prompts import (
     EXTRACT_SINGLE_SYSTEM_PROMPT,
     RELEVANCE_SYSTEM_PROMPT,
 )
-from pydantic import BaseModel
 
 from worker.app.extraction.schemas import (
     EventCountResult,
