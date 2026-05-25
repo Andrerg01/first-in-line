@@ -137,6 +137,9 @@ Respond with a valid JSON object matching this schema exactly:
   "event_type": "grand_opening | soft_opening | ribbon_cutting | reopening | anniversary | unknown",
   "category": "restaurant | cafe | food_truck | brewery | retail | other | null",
   "event_date_str": "YYYY-MM-DD or null",
+  "date_confidence": "exact | month | season | year | unknown",
+  "date_range_start": "YYYY-MM-DD or null",
+  "date_range_end": "YYYY-MM-DD or null",
   "address": "string or null",
   "city": "string or null",
   "state": "2-letter US state code or null",
@@ -155,6 +158,17 @@ promotion | event_type | category | opening_status",
 Set is_relevant to true only if the page clearly describes an upcoming or \
 recent grand opening (or similar) event for a restaurant, cafe, food truck, \
 brewery, or retail business.
+
+For date_confidence:
+- "exact": a specific date is stated (e.g. "opens May 15") — set event_date_str to that date.
+- "month": only a month/year is stated (e.g. "opening in June 2026") — set \
+date_range_start to the first of that month and date_range_end to the last day of that month.
+- "season": a season is stated (e.g. "coming summer 2026") — use spring=Mar 1-May 31, \
+summer=Jun 1-Aug 31, fall=Sep 1-Nov 30, winter=Dec 1-Feb 28 (of next year for winter).
+- "year": only a year is stated — set date_range_start=Jan 1 and date_range_end=Dec 31 \
+of that year.
+- "unknown": no date information at all — leave event_date_str, date_range_start, \
+and date_range_end all null.
 """
 
 
@@ -473,6 +487,9 @@ def ingest_manual_url(db: Session, url: str) -> ManualIngestResponse:
             event_type=extraction.event_type or "unknown",
             category=extraction.category,
             event_date=_parse_event_date(extraction.event_date_str),
+            date_confidence=extraction.date_confidence,
+            date_range_start=extraction.date_range_start,
+            date_range_end=extraction.date_range_end,
             address=extraction.address,
             city=extraction.city,
             state=extraction.state,
@@ -835,6 +852,9 @@ def save_candidate_event(
         event_type=body.event_type or "unknown",
         category=body.category,
         event_date=event_date,
+        date_confidence=body.date_confidence,
+        date_range_start=body.date_range_start,
+        date_range_end=body.date_range_end,
         address=body.address,
         city=body.city,
         state=body.state,

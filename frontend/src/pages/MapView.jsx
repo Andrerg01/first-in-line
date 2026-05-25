@@ -65,12 +65,24 @@ function formatDate(iso) {
   });
 }
 
+function todayIso() {
+  return new Date().toISOString().split("T")[0];
+}
+
+function oneMonthFromNowIso() {
+  const d = new Date();
+  d.setMonth(d.getMonth() + 1);
+  return d.toISOString().split("T")[0];
+}
+
+const DEFAULT_FILTERS = { status: "", category: "", startDate: todayIso(), endDate: oneMonthFromNowIso() };
+
 export default function MapView() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filters, setFilters] = useState({ status: "", category: "", startDate: "", endDate: "" });
-  const [pending, setPending] = useState({ status: "", category: "", startDate: "", endDate: "" });
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [pending, setPending] = useState(DEFAULT_FILTERS);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -89,9 +101,9 @@ export default function MapView() {
   }
 
   function clearFilters() {
-    const empty = { status: "", category: "", startDate: "", endDate: "" };
-    setPending(empty);
-    setFilters(empty);
+    const reset = { ...DEFAULT_FILTERS };
+    setPending(reset);
+    setFilters(reset);
   }
 
   // Default center: Greenville, SC
@@ -145,7 +157,7 @@ export default function MapView() {
         <MapContainer
           center={defaultCenter}
           zoom={defaultZoom}
-          style={{ height: "100%", width: "100%" }}
+          style={{ height: "520px", width: "100%" }}
         >
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'

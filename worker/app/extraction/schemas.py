@@ -101,6 +101,9 @@ class ExtractedEvent(BaseModel):
         "restaurant", "cafe", "food_truck", "brewery", "retail", "other", None
     ] = None
     event_date_str: str | None = None
+    date_confidence: Literal["exact", "month", "season", "year", "unknown"] = "unknown"
+    date_range_start: str | None = None
+    date_range_end: str | None = None
     address: str | None = None
     city: str | None = None
     state: str | None = None

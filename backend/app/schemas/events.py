@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -28,6 +28,9 @@ class EventListItem(BaseModel):
     duplicate_of_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+    date_confidence: str | None = None
+    date_range_start: date | None = None
+    date_range_end: date | None = None
 
 
 class EventStatusUpdate(BaseModel):
@@ -56,6 +59,9 @@ class EventMapItem(BaseModel):
     lon: float
     created_at: datetime
     updated_at: datetime
+    date_confidence: str | None = None
+    date_range_start: date | None = None
+    date_range_end: date | None = None
 
 
 class EventDetail(BaseModel):
@@ -83,3 +89,6 @@ class EventDetail(BaseModel):
     duplicate_of_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+    date_confidence: str | None = None
+    date_range_start: date | None = None
+    date_range_end: date | None = None

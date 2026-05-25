@@ -63,7 +63,7 @@ export default function CalendarView() {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    fetchCalendarEvents({ ...filters, startDate, endDate, limit: 500 })
+    fetchCalendarEvents({ ...filters, startDate, endDate, limit: 200 })
       .then(setEvents)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -100,6 +100,25 @@ export default function CalendarView() {
     const day = event.event_date.slice(0, 10);
     if (!byDate[day]) byDate[day] = [];
     byDate[day].push(event);
+  }
+
+  // Also spread uncertain events (those with a date range) across every day
+  // of the current month that falls within their range.
+  for (const event of events) {
+    if (!event.date_range_start || !event.date_range_end) continue;
+    if (event.date_confidence === "exact") continue;
+    const rangeStart = new Date(event.date_range_start);
+    const rangeEnd = new Date(event.date_range_end);
+    for (let d = 1; d <= lastDay; d++) {
+      const iso = makeIsoDate(viewYear, viewMonth, d);
+      const cellDate = new Date(iso);
+      if (cellDate >= rangeStart && cellDate <= rangeEnd) {
+        if (!byDate[iso]) byDate[iso] = [];
+        if (!byDate[iso].find((e) => e.id === event.id)) {
+          byDate[iso].push({ ...event, _uncertain: true });
+        }
+      }
+    }
   }
 
   const weeks = buildMonthGrid(viewYear, viewMonth);
@@ -167,19 +186,26 @@ export default function CalendarView() {
               return (
                 <div key={di} style={{ ...styles.dayCell, ...(isToday ? styles.todayCell : {}) }}>
                   <div style={{ ...styles.dayNumber, ...(isToday ? styles.todayNumber : {}) }}>{day}</div>
-                  {dayEvents.map((ev) => (
-                    <div
-                      key={ev.id}
-                      onClick={() => navigate(`/events/${ev.id}`)}
-                      style={{
-                        ...styles.eventChip,
-                        background: STATUS_COLORS[ev.status] || "#f3f4f6",
-                      }}
-                      title={`${ev.business_name || "(unnamed)"} — ${ev.status}`}
-                    >
-                      {ev.business_name || "(unnamed)"}
-                    </div>
-                  ))}
+                  {dayEvents.map((ev) => {
+                    const isUncertain = ev._uncertain;
+                    return (
+                      <div
+                        key={ev.id + (isUncertain ? "_u" : "")}
+                        onClick={() => navigate(`/events/${ev.id}`)}
+                        style={{
+                          ...styles.eventChip,
+                          background: isUncertain
+                            ? `repeating-linear-gradient(45deg, ${STATUS_COLORS[ev.status] || "#f3f4f6"}, ${STATUS_COLORS[ev.status] || "#f3f4f6"} 4px, #fff 4px, #fff 8px)`
+                            : (STATUS_COLORS[ev.status] || "#f3f4f6"),
+                          opacity: isUncertain ? 0.85 : 1,
+                          fontStyle: isUncertain ? "italic" : "normal",
+                        }}
+                        title={`${ev.business_name || "(unnamed)"} — ${isUncertain ? (ev.date_confidence || "uncertain") + " (uncertain date range)" : ev.status}`}
+                      >
+                        {ev.business_name || "(unnamed)"}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}

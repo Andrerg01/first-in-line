@@ -66,6 +66,9 @@ Respond with ONLY a valid JSON object matching this schema:
     "event_type": "grand_opening | soft_opening | ribbon_cutting | reopening | anniversary | unknown",
     "category": "restaurant | cafe | food_truck | brewery | retail | other | null",
     "event_date_str": "YYYY-MM-DD or null",
+    "date_confidence": "exact | month | season | year | unknown",
+    "date_range_start": "YYYY-MM-DD or null",
+    "date_range_end": "YYYY-MM-DD or null",
     "address": "string or null",
     "city": "string or null",
     "state": "2-letter US state code or null",
@@ -84,6 +87,16 @@ Respond with ONLY a valid JSON object matching this schema:
 For confidence_score: use 0.9+ when the page explicitly names the event,
 date, and location; use 0.5-0.8 for probable but incomplete information;
 use below 0.5 only when heavily inferred.
+
+For date_confidence:
+- "exact": a specific date is stated (e.g. "opens May 15") — set event_date_str to that date.
+- "month": only a month/year is stated (e.g. "opening in June 2026") — set
+  date_range_start to the first of that month and date_range_end to the last day of that month.
+- "season": a season is stated (e.g. "coming summer 2026") — use spring=Mar 1-May 31,
+  summer=Jun 1-Aug 31, fall=Sep 1-Nov 30, winter=Dec 1-Feb 28 (of next year for winter).
+- "year": only a year is stated — set date_range_start=Jan 1 and date_range_end=Dec 31 of that year.
+- "unknown": no date information at all — leave event_date_str, date_range_start,
+  and date_range_end all null.
 """
 
 # ---------------------------------------------------------------------------
@@ -105,6 +118,9 @@ Respond with ONLY a valid JSON object matching this schema:
       "event_type": "grand_opening | soft_opening | ribbon_cutting | reopening | anniversary | unknown",
       "category": "restaurant | cafe | food_truck | brewery | retail | other | null",
       "event_date_str": "YYYY-MM-DD or null",
+      "date_confidence": "exact | month | season | year | unknown",
+      "date_range_start": "YYYY-MM-DD or null",
+      "date_range_end": "YYYY-MM-DD or null",
       "address": "string or null",
       "city": "string or null",
       "state": "2-letter US state code or null",
@@ -123,4 +139,14 @@ Respond with ONLY a valid JSON object matching this schema:
 
 Include only businesses that have a clearly announced opening event.
 Omit businesses mentioned only in passing.
+
+For date_confidence:
+- "exact": a specific date is stated (e.g. "opens May 15") — set event_date_str to that date.
+- "month": only a month/year is stated (e.g. "opening in June 2026") — set
+  date_range_start to the first of that month and date_range_end to the last day of that month.
+- "season": a season is stated (e.g. "coming summer 2026") — use spring=Mar 1-May 31,
+  summer=Jun 1-Aug 31, fall=Sep 1-Nov 30, winter=Dec 1-Feb 28 (of next year for winter).
+- "year": only a year is stated — set date_range_start=Jan 1 and date_range_end=Dec 31 of that year.
+- "unknown": no date information at all — leave event_date_str, date_range_start,
+  and date_range_end all null.
 """

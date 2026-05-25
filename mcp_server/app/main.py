@@ -28,7 +28,7 @@ from duckduckgo_search import DDGS
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from mcp_server.app.tools.geocode import router as geocode_router
+from .tools.geocode import router as geocode_router
 
 log = logging.getLogger(__name__)
 

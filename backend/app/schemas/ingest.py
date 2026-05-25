@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -74,6 +74,9 @@ class LLMExtractionResult(BaseModel):
     state: str | None = None
     promotion_text: str | None = None
     confidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    date_confidence: str | None = None
+    date_range_start: date | None = None
+    date_range_end: date | None = None
     claims: list[LLMClaim] = []
 
 
@@ -133,6 +136,9 @@ class CandidateEventCreate(BaseModel):
     state: str | None = None
     promotion_text: str | None = None
     confidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    date_confidence: str | None = None
+    date_range_start: date | None = None
+    date_range_end: date | None = None
     claims: list[CandidateClaimCreate] = []
     llm_calls: list[LLMCallCreate] = []
 
