@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -192,12 +192,14 @@ def add_location(
 @router.delete(
     "/me/locations/{location_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
     summary="Remove a preferred location",
 )
 def remove_location(
     location_id: uuid.UUID,
     current_user: User = Depends(auth_service.get_current_user),
     db: Session = Depends(get_db),
-) -> None:
+) -> Response:
     """Remove a preferred location owned by the authenticated user."""
     auth_service.remove_preferred_location(db, current_user, location_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

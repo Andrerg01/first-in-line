@@ -308,15 +308,83 @@ created_at timestamp
 updated_at timestamp
 ```
 
-## `sent_alerts`
+## User Authentication and Profile Tables
 
-Prevents duplicate notifications.
+Added in migration `0006_users`.
+
+## `users`
+
+Core identity and credentials for registered accounts.
 
 ```text
-id uuid primary key
-user_id uuid references users(id)
-event_id uuid references events(id)
-channel text
-sent_at timestamp
-status text
+id              uuid primary key (generated at registration time, used as password pepper)
+email           text unique not null
+username        text unique not null
+password_hash   text not null        (bcrypt, peppered with user_id)
+tier            text default 'basic'
+role            text default 'user'  (user | admin | developer)
+is_active       boolean default true
+created_at      timestamp
+updated_at      timestamp
 ```
+
+## `user_profiles`
+
+Optional display metadata. Separate from `users` so profile can be null until filled.
+
+```text
+id              uuid primary key
+user_id         uuid references users(id) unique
+first_name      text null
+middle_initial  text null
+last_name       text null
+phone_number    text null
+created_at      timestamp
+updated_at      timestamp
+```
+
+## `user_credential_history`
+
+Immutable audit log — rows are never updated or deleted.
+
+```text
+id              uuid primary key
+user_id         uuid references users(id)
+field_changed   text              (email | username | password)
+old_value       text null         (password changes store hashes; plain text for email/username)
+new_value       text null
+changed_at      timestamp default now()
+```
+
+## `user_preferred_locations`
+
+Cities a user wants to receive event notifications for.
+
+```text
+id              uuid primary key
+user_id         uuid references users(id)
+city            text not null
+state           text not null     (2-letter US state code)
+created_at      timestamp
+```
+
+Unique constraint: `(user_id, city, state)`.
+
+When a new preferred location is added it is also upserted into `search_locations`.
+
+## `search_locations`
+
+The canonical list of city/state pairs the scraper searches.
+Seeded with `Greenville, SC` (`is_default = true`) on first migration.
+
+```text
+id              uuid primary key
+city            text not null
+state           text not null
+is_default      boolean default false
+user_count      integer default 0    (how many users have this as a preferred location)
+created_at      timestamp
+updated_at      timestamp
+```
+
+Unique constraint: `(city, state)`.

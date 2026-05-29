@@ -170,11 +170,12 @@ def upgrade() -> None:
     )
 
     # Seed the default search location
+    seed_id = str(uuid.uuid4())
     op.execute(
         sa.text(
-            "INSERT INTO search_locations (id, city, state, is_default, user_count) "
-            "VALUES (:id, 'Greenville', 'SC', true, 0)"
-        ).bindparams(id=str(uuid.uuid4()))
+            f"INSERT INTO search_locations (id, city, state, is_default, user_count) "
+            f"VALUES ('{seed_id}'::uuid, 'Greenville', 'SC', true, 0)"
+        )
     )
 
 

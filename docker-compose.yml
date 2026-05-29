@@ -26,7 +26,7 @@ services:
     container_name: first_in_line_backend
     environment:
       APP_ENV: ${APP_ENV:-local}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/grand_openings}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/${POSTGRES_DB:-grand_openings}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp-server:9000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
