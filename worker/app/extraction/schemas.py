@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -79,8 +79,12 @@ class ExtractedClaim(BaseModel):
         "event_type",
         "category",
         "opening_status",
+        # date-range variants the LLM occasionally produces
+        "date_range_start",
+        "date_range_end",
+        "date_range",
     ]
-    claim_value: str
+    claim_value: str | None = None
     claim_text: str | None = None
 
 
@@ -100,6 +104,34 @@ class ExtractedEvent(BaseModel):
     category: Literal[
         "restaurant", "cafe", "food_truck", "brewery", "retail", "other", None
     ] = None
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _normalize_category(cls, v: object) -> object:
+        """Coerce unexpected LLM category values to allowed literals.
+
+        The LLM occasionally returns compound values like ``'restaurant | brewery'``
+        or informal labels like ``'bar'``.  Map those to the nearest valid category
+        rather than raising a validation error.
+        """
+        if not isinstance(v, str):
+            return v
+        # Compound categories: take the first recognised token
+        _ALIASES: dict[str, str] = {
+            "bar": "other",
+            "hotel": "other",
+            "spa": "other",
+            "entertainment": "other",
+        }
+        _VALID = {"restaurant", "cafe", "food_truck", "brewery", "retail", "other"}
+        # Strip whitespace around pipe separators and try each token
+        for token in v.replace(" ", "").split("|"):
+            token = token.lower()
+            if token in _VALID:
+                return token
+            if token in _ALIASES:
+                return _ALIASES[token]
+        return "other"
     event_date_str: str | None = None
     date_confidence: Literal["exact", "month", "season", "year", "unknown"] = "unknown"
     date_range_start: str | None = None

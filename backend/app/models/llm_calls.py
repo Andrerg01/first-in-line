@@ -28,6 +28,7 @@ class LLMCall(Base):
     """A single OpenAI API call recorded during extraction."""
 
     __tablename__ = "llm_calls"
+    __table_args__ = {"schema": "logs"}
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     call_type: Mapped[str] = mapped_column(

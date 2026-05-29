@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { fetchReviewQueue, patchEventStatus, runRetroactiveDedup } from "../api/client";
+import NavBar from "../components/NavBar";
 import MergeDialog from "./adminReview/MergeDialog";
 import ReviewQueueTable from "./adminReview/ReviewQueueTable";
 import { btnStyle, pageStyle } from "./adminReview/styles";
@@ -66,6 +67,7 @@ export default function AdminReview() {
 
   return (
     <div style={pageStyle}>
+      <NavBar />
       {mergeTarget && (
         <MergeDialog event={mergeTarget} onClose={() => setMergeTarget(null)} onMerged={handleMerged} />
       )}

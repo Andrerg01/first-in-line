@@ -109,6 +109,26 @@ POST /api/admin/events/{event_id}/flag-duplicate
 POST /api/admin/dedup/retroactive-run
 ```
 
+## Auth (Phase 4)
+
+```text
+POST /api/auth/register        — create account, return JWT
+POST /api/auth/login           — authenticate, return JWT
+GET  /api/auth/me              — current user info (Bearer required)
+PUT  /api/auth/me/email        — change email (requires current password)
+PUT  /api/auth/me/username     — change username
+PUT  /api/auth/me/password     — change password (requires current password)
+GET  /api/auth/me/profile      — get profile (name, phone)
+PUT  /api/auth/me/profile      — create or update profile
+GET  /api/auth/me/locations    — list preferred city/state locations
+POST /api/auth/me/locations    — add preferred location (idempotent)
+DELETE /api/auth/me/locations/{id} — remove preferred location
+```
+
+Authentication scheme: `Authorization: Bearer <JWT>` (HS256, 24h expiry).
+Passwords are bcrypt-hashed with the user's UUID as a pepper.
+No data is deleted; credential changes are logged to `user_credential_history`.
+
 ## Suggested Backend Modules
 
 ```text
@@ -124,16 +144,21 @@ backend/
       events.py
       ingest.py
       admin.py
+      auth.py          ← added Phase 4
     services/
       event_service.py
       ingestion_service.py
       source_service.py
       mcp_client.py
       openai_client.py
+      auth_service.py  ← added Phase 4
     repositories/
       event_repository.py
       source_repository.py
       claims_repository.py
+      user_repository.py  ← added Phase 4
+    utils/
+      security.py      ← added Phase 4 (bcrypt + JWT helpers)
 ```
 
 ## Database Access

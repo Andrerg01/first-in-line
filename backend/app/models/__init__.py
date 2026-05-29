@@ -12,6 +12,14 @@ from app.models.processing import ProcessingDecision  # noqa: F401
 from app.models.search import SearchResult, SearchRun  # noqa: F401
 from app.models.sources import EventSource, SourceDocument  # noqa: F401
 from app.models.telemetry import PipelineToolCall  # noqa: F401
+from app.models.users import (  # noqa: F401
+    SearchLocation,
+    User,
+    UserCredentialHistory,
+    UserPreferredLocation,
+    UserProfile,
+)
+from app.models.users import User, UserProfile, UserCredentialHistory, UserPreferredLocation, SearchLocation  # noqa: F401
 
 __all__ = [
     "Location",

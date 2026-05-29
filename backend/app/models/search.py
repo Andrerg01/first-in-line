@@ -21,10 +21,11 @@ class SearchRun(Base):
     """A single discovery run scoped to a location."""
 
     __tablename__ = "search_runs"
+    __table_args__ = {"schema": "ingestion"}
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     location_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("locations.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("ingestion.locations.id", ondelete="SET NULL"), nullable=True
     )
     run_type: Mapped[str] = mapped_column(
         String(40), nullable=False
@@ -61,10 +62,11 @@ class SearchResult(Base):
     """Raw search result metadata produced during a search run."""
 
     __tablename__ = "search_results"
+    __table_args__ = {"schema": "ingestion"}
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     search_run_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("search_runs.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("ingestion.search_runs.id", ondelete="CASCADE"), nullable=False
     )
     query: Mapped[str | None] = mapped_column(Text, nullable=True)
     rank: Mapped[int | None] = mapped_column(Integer, nullable=True)

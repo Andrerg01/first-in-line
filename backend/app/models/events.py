@@ -37,6 +37,7 @@ class Event(Base):
         Index("ix_events_business_name", "business_name"),
         Index("ix_events_possible_duplicate", "possible_duplicate"),
         Index("ix_events_normalized_business_name", "normalized_business_name"),
+        {"schema": "events"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -70,7 +71,7 @@ class Event(Base):
     confidence_score: Mapped[float | None] = mapped_column(Numeric(4, 3), nullable=True)
     possible_duplicate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     duplicate_of_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("events.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("events.events.id", ondelete="SET NULL"), nullable=True
     )
     normalized_business_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

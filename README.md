@@ -14,7 +14,8 @@ First In Line discovers nearby business grand openings and preserves source evid
 | 5 | LangGraph extraction pipeline — classify, extract, multi-event, LLM call logging | ✅ Complete |
 | 6 | Duplicate handling and review queue improvements | ✅ Complete |
 | 7 | Map/calendar views, geocoding pipeline, date/radius filters | ✅ Complete |
-| 8+ | CI/CD, cloud deployment, notifications | Planned |
+| 8 | User auth — registration, login, profiles, preferred locations | ✅ Complete |
+| 9+ | CI/CD, cloud deployment, notifications | Planned |
 
 Current version: see `VERSION` file.
 
@@ -137,9 +138,29 @@ python -m worker.app.cli run_once
 | `/events/:id` | Event detail with sources and claims |
 | `/map` | Leaflet map with geocoded event pins and filters |
 | `/calendar` | Month calendar with event chips |
+| `/profile` | User profile, credential management, preferred locations |
 | `/admin/ingest` | Paste a URL to trigger manual ingestion |
 | `/admin/review` | Review queue with duplicate merge workflow |
 | `/admin/events/:id` | Verify / reject a candidate event |
+
+## Phase 8 User Authentication
+
+Phase 8 adds account management and personalised city preferences:
+
+- **Register / Login** — NavBar button opens an `AuthModal`; JWT stored in `localStorage`.
+- **Profile page** (`/profile`) — update name/phone, change email/username/password, manage preferred cities.
+- **Preferred locations** — each city a user adds is upserted into the `search_locations` table so the scraper includes it.
+- **Audit trail** — credential changes are logged to `user_credential_history`; no data is ever deleted.
+- **JWT auth** — `Authorization: Bearer <token>` on all protected endpoints; 24 h expiry, HS256; configure `JWT_SECRET` in `.env`.
+- **Subscription tiers** — `tier` field (`basic` by default) and `role` field (`user` | `admin` | `developer`).
+
+New env variables for Phase 8:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JWT_SECRET` | _(insecure default)_ | **Must be overridden in production.** |
+| `JWT_ALGORITHM` | `HS256` | JWT signing algorithm. |
+| `JWT_EXPIRY_HOURS` | `24` | Token lifetime in hours. |
 
 ## Phase 7 Map, Calendar, and Geocoding
 

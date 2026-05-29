@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { fetchEvents } from "../api/client";
+import NavBar from "../components/NavBar";
 
 const STATUS_OPTIONS = ["", "candidate", "verified", "rejected", "needs_review", "merged", "expired"];
 const CATEGORY_OPTIONS = ["", "restaurant", "cafe", "food_truck", "brewery", "retail", "other"];
@@ -104,14 +105,12 @@ export default function EventList() {
 
   return (
     <div style={styles.container}>
+      <NavBar />
       <header style={styles.header}>
         <div>
-          <h1 style={styles.title}>First In Line</h1>
           <p style={styles.subtitle}>Upcoming grand openings in Greenville, SC and beyond</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Link to="/map" style={{ ...styles.ingestLink, background: "#374151" }}>Map</Link>
-          <Link to="/calendar" style={{ ...styles.ingestLink, background: "#374151" }}>Calendar</Link>
           <Link to="/admin/ingest" style={styles.ingestLink}>+ Ingest URL</Link>
           <Link to="/admin/review" style={{ ...styles.ingestLink, background: "#2563eb" }}>Review Queue</Link>
         </div>

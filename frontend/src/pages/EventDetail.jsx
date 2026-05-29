@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { fetchEvent, fetchEventSources, fetchEventClaims, patchEventStatus } from "../api/client";
+import NavBar from "../components/NavBar";
 
 const STATUS_COLORS = {
   candidate: { bg: "#e8f4fd", border: "#90caf9" },
@@ -196,6 +197,7 @@ export default function EventDetail() {
 
   return (
     <div style={styles.container}>
+      <NavBar />
       <Link to="/" style={styles.backLink}>← Back to list</Link>
 
       <header style={styles.eventHeader}>

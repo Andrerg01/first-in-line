@@ -257,6 +257,80 @@ class TestRoutingHelpers:
 
 
 # ---------------------------------------------------------------------------
+# ExtractedClaim and ExtractedEvent schema validation
+# ---------------------------------------------------------------------------
+
+
+class TestExtractedClaimSchema:
+    """Cover the new claim_type/claim_value validation added in 0.12.1."""
+
+    def test_accepts_date_range_start_claim_type(self):
+        claim = ExtractedClaim(
+            claim_type="date_range_start",
+            claim_value="2026-06-01",
+        )
+        assert claim.claim_type == "date_range_start"
+
+    def test_accepts_date_range_end_claim_type(self):
+        claim = ExtractedClaim(
+            claim_type="date_range_end",
+            claim_value="2026-06-30",
+        )
+        assert claim.claim_type == "date_range_end"
+
+    def test_accepts_date_range_claim_type(self):
+        claim = ExtractedClaim(
+            claim_type="date_range",
+            claim_value="June 2026",
+        )
+        assert claim.claim_type == "date_range"
+
+    def test_accepts_null_claim_value(self):
+        claim = ExtractedClaim(claim_type="event_date", claim_value=None)
+        assert claim.claim_value is None
+
+    def test_rejects_unknown_claim_type(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            ExtractedClaim(claim_type="unknown_type", claim_value="x")
+
+
+class TestExtractedEventCategoryNormalizer:
+    """Cover the _normalize_category validator added in 0.12.1."""
+
+    def test_valid_category_passes_through(self):
+        event = ExtractedEvent(business_name="Brew Co", category="brewery")
+        assert event.category == "brewery"
+
+    def test_bar_maps_to_other(self):
+        event = ExtractedEvent(business_name="Bar X", category="bar")
+        assert event.category == "other"
+
+    def test_compound_pipe_category_takes_first_valid(self):
+        event = ExtractedEvent(
+            business_name="New Realm",
+            category="restaurant | brewery",
+        )
+        assert event.category == "restaurant"
+
+    def test_compound_reversed_takes_first_valid(self):
+        event = ExtractedEvent(
+            business_name="New Realm",
+            category="brewery | restaurant",
+        )
+        assert event.category == "brewery"
+
+    def test_entirely_unknown_category_falls_back_to_other(self):
+        event = ExtractedEvent(business_name="Mystery", category="nightclub")
+        assert event.category == "other"
+
+    def test_none_category_returns_none(self):
+        event = ExtractedEvent(business_name="TBD", category=None)
+        assert event.category is None
+
+
+# ---------------------------------------------------------------------------
 # Cost estimation
 # ---------------------------------------------------------------------------
 

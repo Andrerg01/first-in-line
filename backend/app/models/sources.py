@@ -34,6 +34,7 @@ class SourceDocument(Base):
         Index("ix_source_documents_canonical_url", "canonical_url"),
         Index("ix_source_documents_domain", "domain"),
         Index("ix_source_documents_fetched_at", "fetched_at"),
+        {"schema": "ingestion"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -78,13 +79,14 @@ class EventSource(Base):
     """Join record linking an event to one of its source documents."""
 
     __tablename__ = "event_sources"
+    __table_args__ = {"schema": "events"}
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     event_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("events.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("events.events.id", ondelete="CASCADE"), nullable=False
     )
     source_document_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("ingestion.source_documents.id", ondelete="CASCADE"), nullable=False
     )
     relationship_type: Mapped[str] = mapped_column(
         String(40), nullable=False, default="primary_source"

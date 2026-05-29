@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from typing import Callable
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
@@ -45,6 +45,16 @@ def _get_engine() -> Engine:
                 "DATABASE_URL is not set; cannot initialise database engine."
             )
         _engine = create_engine(url, pool_pre_ping=True)
+
+        @event.listens_for(_engine, "connect")
+        def _set_search_path(dbapi_conn, _conn_record) -> None:
+            """Set schema search path for every new connection."""
+            cursor = dbapi_conn.cursor()
+            cursor.execute(
+                "SET search_path TO events, ingestion, users, logs, public"
+            )
+            cursor.close()
+
     return _engine
 
 

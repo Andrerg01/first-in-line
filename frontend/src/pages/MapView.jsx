@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
+import NavBar from "../components/NavBar";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
@@ -142,6 +143,7 @@ export default function MapView() {
 
   return (
     <div style={styles.container}>
+      <NavBar />
       <header style={styles.header}>
         <div>
           <h1 style={styles.title}>Map View</h1>
@@ -150,8 +152,6 @@ export default function MapView() {
           </p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <Link to="/" style={styles.navLink}>Event List</Link>
-          <Link to="/calendar" style={styles.navLink}>Calendar</Link>
           <Link to="/admin/ingest" style={{ ...styles.navLink, background: "#16a34a" }}>+ Ingest URL</Link>
         </div>
       </header>
