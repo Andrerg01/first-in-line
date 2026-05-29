@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ingestUrl } from "../api/client";
+import NavBar from "../components/NavBar";
 
 const STATUS_COLORS = {
   candidate: "#6c757d",
@@ -35,11 +36,9 @@ export default function AdminIngest() {
 
   return (
     <div style={styles.page}>
+      <NavBar />
       <header style={styles.header}>
         <h1 style={styles.title}>Manual URL Ingestion</h1>
-        <nav style={styles.nav}>
-          <Link to="/" style={styles.navLink}>← Back to Events</Link>
-        </nav>
       </header>
 
       <section style={styles.formSection}>

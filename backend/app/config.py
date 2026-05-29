@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = ""  # defaults to config.toml [llm] backend_model
 
+    # Auth / JWT
+    jwt_secret: str = "change-me-in-production-use-a-long-random-string"
+    jwt_algorithm: str = "HS256"
+    jwt_expiry_hours: int = 24
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import NavBar from "../components/NavBar";
 import { fetchCalendarEvents } from "../api/mapClient";
 import MultiSelectDropdown from "../components/MultiSelectDropdown";
 
@@ -138,6 +139,7 @@ export default function CalendarView() {
 
   return (
     <div style={styles.container}>
+      <NavBar />
       <header style={styles.header}>
         <div>
           <h1 style={styles.title}>Calendar View</h1>
@@ -146,8 +148,6 @@ export default function CalendarView() {
           </p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <Link to="/" style={styles.navLink}>Event List</Link>
-          <Link to="/map" style={styles.navLink}>Map</Link>
           <Link to="/admin/ingest" style={{ ...styles.navLink, background: "#16a34a" }}>+ Ingest URL</Link>
         </div>
       </header>
