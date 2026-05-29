@@ -10,6 +10,15 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, override_engine
 
+# Map every named schema to None so SQLite (which has no schema support) can
+# create tables without schema prefixes.
+_SCHEMA_TRANSLATE: dict[str, None] = {
+    "events": None,
+    "ingestion": None,
+    "users": None,
+    "logs": None,
+}
+
 
 @pytest.fixture(scope="function")
 def db_session():
@@ -21,7 +30,7 @@ def db_session():
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
-    )
+    ).execution_options(schema_translate_map=_SCHEMA_TRANSLATE)
     override_engine(engine)
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, autocommit=False, autoflush=False)

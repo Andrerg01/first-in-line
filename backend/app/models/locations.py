@@ -20,6 +20,7 @@ class Location(Base):
     """A tracked geographic area (e.g. Greenville, SC)."""
 
     __tablename__ = "locations"
+    __table_args__ = {"schema": "ingestion"}
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4

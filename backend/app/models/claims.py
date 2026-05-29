@@ -29,13 +29,14 @@ class EventClaim(Base):
     """An atomic extracted claim from a source document."""
 
     __tablename__ = "event_claims"
+    __table_args__ = {"schema": "events"}
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     event_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("events.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("events.events.id", ondelete="SET NULL"), nullable=True
     )
     source_document_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("ingestion.source_documents.id", ondelete="CASCADE"), nullable=False
     )
     claim_type: Mapped[str] = mapped_column(
         String(40), nullable=False

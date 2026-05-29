@@ -40,13 +40,14 @@ class PipelineToolCall(Base):
     """
 
     __tablename__ = "pipeline_tool_calls"
+    __table_args__ = {"schema": "logs"}
 
     id: Mapped[_uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=_uuid.uuid4
     )
     search_run_id: Mapped[_uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("search_runs.id", ondelete="CASCADE"),
+        ForeignKey("ingestion.search_runs.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

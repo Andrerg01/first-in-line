@@ -39,6 +39,7 @@ class User(Base):
         Index("ix_users_email", "email", unique=True),
         Index("ix_users_username", "username", unique=True),
         Index("ix_users_role", "role"),
+        {"schema": "users"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -85,10 +86,11 @@ class UserProfile(Base):
     """Optional display-name and contact information for a user."""
 
     __tablename__ = "user_profiles"
+    __table_args__ = {"schema": "users"}
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
+        ForeignKey("users.users.id", ondelete="CASCADE"), nullable=False, unique=True
     )
 
     first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -121,11 +123,12 @@ class UserCredentialHistory(Base):
     __table_args__ = (
         Index("ix_ucredh_user_id", "user_id"),
         Index("ix_ucredh_changed_at", "changed_at"),
+        {"schema": "users"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("users.users.id", ondelete="CASCADE"), nullable=False
     )
     # "email" | "username" | "password_hash"
     field_changed: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -148,11 +151,12 @@ class UserPreferredLocation(Base):
     __tablename__ = "user_preferred_locations"
     __table_args__ = (
         Index("ix_upref_user_id", "user_id"),
+        {"schema": "users"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        ForeignKey("users.users.id", ondelete="CASCADE"), nullable=False
     )
     city: Mapped[str] = mapped_column(String(120), nullable=False)
     state: Mapped[str] = mapped_column(String(2), nullable=False)
@@ -178,6 +182,7 @@ class SearchLocation(Base):
     __tablename__ = "search_locations"
     __table_args__ = (
         Index("ix_search_loc_city_state", "city", "state", unique=True),
+        {"schema": "ingestion"},
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

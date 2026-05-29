@@ -29,20 +29,21 @@ class ProcessingDecision(Base):
     """An automated decision recorded during ingestion for auditability."""
 
     __tablename__ = "processing_decisions"
+    __table_args__ = {"schema": "logs"}
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     source_document_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("source_documents.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("ingestion.source_documents.id", ondelete="SET NULL"), nullable=True
     )
     event_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("events.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("events.events.id", ondelete="SET NULL"), nullable=True
     )
     decision_type: Mapped[str] = mapped_column(String(60), nullable=False)
     decision_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
     llm_call_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("llm_calls.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("logs.llm_calls.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_now

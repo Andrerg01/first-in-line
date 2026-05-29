@@ -50,3 +50,21 @@ For each feature:
 - Temporary scripts and debug files are allowed only for active debugging.
 - Remove temporary artifacts before completion.
 - Never commit scratch files unless intentionally documented tooling.
+
+## Database Schema Convention
+
+The `public` schema is left empty. All tables belong to one of four named schemas:
+
+| Schema | What lives here |
+|--------|----------------|
+| `events` | `events`, `event_claims`, `event_sources` |
+| `ingestion` | `source_documents`, `locations`, `search_runs`, `search_results`, `search_locations` |
+| `users` | `users`, `user_profiles`, `user_credential_history`, `user_preferred_locations` |
+| `logs` | `llm_calls`, `pipeline_tool_calls`, `processing_decisions` |
+
+Rules:
+- Every new ORM model must declare `__table_args__ = {"schema": "<schema>"}`.
+- Alembic migrations must include `schema=` on every `op.create_table()` call.
+- Cross-schema FKs must use the fully-qualified form: `schema.table.column`.
+- `search_path` for application connections: `events, ingestion, users, logs, public`.
+- See `docs/project_plan/03_database_plan.md` for full table definitions.
